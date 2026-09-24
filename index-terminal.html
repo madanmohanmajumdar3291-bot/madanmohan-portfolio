@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Madan Mohan Majumdar — root access</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050505;
+    --panel: #0a0a0a;
+    --green: #39ff88;
+    --red: #ff3366;
+    --amber: #ffb020;
+    --ink: #e8ffe8;
+    --muted: #6b7a6f;
+    --line: rgba(57,255,136,0.22);
+  }
+  * { box-sizing: border-box; margin:0; padding:0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif; overflow-x: hidden; position: relative;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* scanlines + crt flicker */
+  .crt { position: fixed; inset: 0; z-index: 50; pointer-events: none; }
+  .crt::before {
+    content: ''; position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode: multiply; opacity: .5;
+  }
+  .crt::after {
+    content: ''; position: absolute; inset:0; background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.55) 130%);
+  }
+  .noise-flicker { position: fixed; inset:0; z-index: 49; pointer-events: none; background: var(--green); opacity: 0; mix-blend-mode: overlay; animation: flicker 7s infinite; }
+  @keyframes flicker {
+    0%, 96%, 100% { opacity: 0; }
+    97% { opacity: .03; }
+    98% { opacity: 0; }
+    98.5% { opacity: .05; }
+  }
+
+  .grid-overlay { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .06;
+    background-image: linear-gradient(var(--green) 1px, transparent 1px), linear-gradient(90deg, var(--green) 1px, transparent 1px);
+    background-size: 40px 40px; }
+  #starfield { position: fixed; inset: 0; z-index: -2; width:100%; height:100%; display:block; }
+
+  /* boot overlay */
+  #boot { position: fixed; inset:0; background: #000; z-index: 999; color: var(--green); font-family: 'JetBrains Mono', monospace;
+    padding: 40px; font-size: 13px; line-height: 1.8; display:flex; flex-direction:column; justify-content:center;
+    transition: opacity .6s ease, visibility .6s ease; }
+  #boot.done { opacity: 0; visibility: hidden; pointer-events: none; }
+  #boot .line { opacity: 0; white-space: pre; }
+  #boot .cursor { display:inline-block; width:8px; height:14px; background: var(--green); animation: blink 1s step-end infinite; vertical-align: middle; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* nav */
+  nav { position: fixed; top:0; left:0; right:0; z-index:100; display:flex; justify-content:space-between; align-items:center; padding:16px 5%; background: rgba(5,5,5,0.85); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .logo { font-family:'JetBrains Mono',monospace; font-weight:800; font-size:14px; letter-spacing: 1px; color: var(--green); }
+  .logo::before { content: '> '; opacity: .6; }
+  nav ul { list-style:none; display:flex; gap: clamp(14px,3vw,26px); font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.5px; }
+  nav ul a { color: var(--muted); text-decoration:none; transition: color .2s; }
+  nav ul a::before { content: '/'; margin-right: 3px; opacity: .5; }
+  nav ul a:hover { color: var(--green); text-shadow: 0 0 8px var(--green); }
+  @media (max-width:650px){ nav ul{display:none;} }
+  .nav-cta { padding: 8px 16px; font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:700; color:#000; background: var(--green); text-decoration:none; box-shadow: 0 0 16px rgba(57,255,136,.4); }
+  .nav-cta:hover { box-shadow: 0 0 26px rgba(57,255,136,.7); }
+
+  /* hero */
+  .hero { min-height: 94vh; display:flex; flex-direction:column; justify-content:center; padding: 130px 6% 60px; position:relative; }
+  .boot-tag { font-family:'JetBrains Mono',monospace; font-size:12px; color: var(--muted); margin-bottom: 22px; display:flex; align-items:center; gap:10px;
+    opacity:0; animation: riseIn .6s ease forwards .1s; }
+  .boot-tag .blip { width:6px; height:6px; background: var(--red); border-radius:50%; box-shadow: 0 0 8px var(--red); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  h1 { font-family: 'Space Grotesk', sans-serif; font-size: clamp(38px,7.5vw,88px); font-weight: 700; line-height: 0.98; letter-spacing: -2px; max-width: 960px; }
+  h1 .line { display:block; overflow:hidden; }
+  h1 .line span { display:inline-block; opacity:0; transform: translateY(110%); animation: riseIn .8s cubic-bezier(.2,.8,.2,1) forwards; }
+  h1 .glitch { position: relative; color: var(--ink); display:inline-block; }
+  h1 .glitch::before, h1 .glitch::after {
+    content: attr(data-text); position: absolute; top:0; left:0; width:100%; overflow:hidden;
+  }
+  h1 .glitch::before { color: var(--red); left: 2px; animation: glitch1 4s infinite linear alternate-reverse; opacity: .7; }
+  h1 .glitch::after { color: var(--green); left: -2px; animation: glitch2 3s infinite linear alternate-reverse; opacity: .7; }
+  @keyframes glitch1 { 0%,92%,100% { clip-path: inset(0 0 0 0); transform: translate(0); } 93% { clip-path: inset(20% 0 60% 0); transform: translate(-3px,1px); } 95% { clip-path: inset(60% 0 10% 0); transform: translate(3px,-1px); } }
+  @keyframes glitch2 { 0%,90%,100% { clip-path: inset(0 0 0 0); transform: translate(0); } 91% { clip-path: inset(10% 0 70% 0); transform: translate(3px,0); } 94% { clip-path: inset(70% 0 5% 0); transform: translate(-3px,0); } }
+  @keyframes riseIn { to { opacity:1; transform: translateY(0); } }
+
+  .hero p.sub { max-width: 600px; margin-top: 26px; font-size: clamp(16px,2vw,18px); color: var(--muted); line-height: 1.65;
+    opacity:0; animation: riseIn .7s ease forwards .6s; }
+  .hero p.sub .hl { color: var(--green); font-family:'JetBrains Mono',monospace; }
+  .cta-row { margin-top: 36px; display:flex; gap:16px; flex-wrap:wrap; opacity:0; animation: riseIn .7s ease forwards .8s; }
+  .btn { padding: 15px 30px; font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; letter-spacing:.5px; text-decoration:none; display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer; transition: all .2s ease; }
+  .btn-primary { background: var(--green); color:#000; box-shadow: 0 0 20px rgba(57,255,136,.35); }
+  .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 0 34px rgba(57,255,136,.6); }
+  .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .btn-ghost:hover { border-color: var(--green); color: var(--green); transform: translateY(-3px); }
+
+  .terminal-box { margin-top: 60px; max-width: 640px; font-family:'JetBrains Mono',monospace; font-size: 13px; background: rgba(57,255,136,0.03); border: 1px solid var(--line); padding: 20px 22px;
+    opacity:0; animation: riseIn .7s ease forwards 1s; }
+  .terminal-box .tb-head { display:flex; gap:6px; margin-bottom: 14px; }
+  .terminal-box .tb-head span { width:9px; height:9px; border-radius:50%; }
+  .tb-head span:nth-child(1){ background:#ff5f56; } .tb-head span:nth-child(2){ background:#ffbd2e; } .tb-head span:nth-child(3){ background:#27c93f; }
+  .terminal-box .tline { color: var(--muted); line-height: 1.9; }
+  .terminal-box .tline .k { color: var(--green); }
+  .terminal-box .tline .v { color: var(--ink); }
+
+  /* sections */
+  section { padding: 100px 6%; max-width: 1300px; margin: 0 auto; }
+  .tag { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color: var(--red); margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+  .tag::before { content:'['; } .tag::after { content:']'; }
+  h2 { font-size: clamp(28px,4.4vw,48px); font-weight:700; letter-spacing:-1px; max-width: 700px; line-height: 1.1; }
+  .section-head { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap; margin-bottom:54px; }
+  .section-head p { font-family:'JetBrains Mono',monospace; color:var(--muted); max-width:360px; line-height:1.7; font-size:12.5px; }
+
+  .reveal { opacity:0; transform: translateY(36px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.in { opacity:1; transform: translateY(0); }
+
+  /* project cards - brutalist terminal windows */
+  .proj-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(330px,1fr)); gap: 2px; background: var(--line); border: 1px solid var(--line); }
+  .proj-card { background: var(--panel); text-decoration:none; color: var(--ink); display:flex; flex-direction:column; position:relative; transition: background .3s ease; }
+  .proj-card:hover { background: rgba(57,255,136,0.04); }
+  .proj-card .card-head { display:flex; justify-content:space-between; align-items:center; padding: 14px 18px; border-bottom: 1px solid var(--line); font-family:'JetBrains Mono',monospace; font-size:11px; color: var(--muted); }
+  .proj-card .card-head .stat-live { color: var(--green); }
+  .proj-card .card-head .stat-progress { color: var(--amber); }
+  .proj-visual { height: 140px; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; border-bottom: 1px solid var(--line); }
+  .proj-visual::before { content:''; position:absolute; inset:0; background: repeating-linear-gradient(90deg, rgba(57,255,136,.04) 0 1px, transparent 1px 8px); }
+  .proj-visual svg { width: 34px; height: 34px; filter: drop-shadow(0 0 12px currentColor); position: relative; z-index: 2; }
+  .v1 { color: var(--green); } .v2 { color: var(--amber); } .v3 { color: var(--red); }
+  .proj-body { padding: 22px; flex:1; display:flex; flex-direction:column; }
+  .proj-card h3 { font-size: 21px; font-weight: 700; margin-bottom: 10px; }
+  .proj-card p.desc { color: var(--muted); font-size: 13.5px; line-height:1.65; flex:1; margin-bottom: 18px; }
+  .proj-tags { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+  .proj-tags span { font-family:'JetBrains Mono',monospace; font-size:10.5px; color: var(--green); border:1px solid var(--line); padding: 4px 9px; }
+  .proj-link { font-family:'JetBrains Mono',monospace; display:flex; align-items:center; gap:8px; font-weight:700; font-size:12.5px; color: var(--ink); }
+  .proj-link .arrow { transition: transform .3s ease; }
+  .proj-card:hover .proj-link .arrow { transform: translateX(6px); color: var(--green); }
+
+  /* process - log lines */
+  .log-track { font-family:'JetBrains Mono',monospace; font-size: 13.5px; border: 1px solid var(--line); background: rgba(57,255,136,0.02); }
+  .log-line { display: grid; grid-template-columns: 90px 140px 1fr; gap: 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); align-items: start; }
+  .log-line:last-child { border-bottom: none; }
+  .log-line .ts { color: var(--muted); }
+  .log-line .lvl { font-weight: 700; }
+  .log-line .lvl.ok { color: var(--green); }
+  .log-line .lvl.warn { color: var(--amber); }
+  .log-line .msg { color: var(--ink); }
+  .log-line .msg .d { color: var(--muted); font-family: 'Space Grotesk', sans-serif; display:block; margin-top: 4px; font-size: 13px; }
+  @media (max-width: 700px) { .log-line { grid-template-columns: 1fr; gap: 4px; } }
+
+  /* about */
+  .split { display:grid; grid-template-columns: 1fr 1fr; gap: 50px; align-items: start; }
+  @media (max-width:850px){ .split{grid-template-columns:1fr;} }
+  .whoami { font-family:'JetBrains Mono',monospace; font-size: 13px; border: 1px solid var(--line); background: rgba(57,255,136,0.02); padding: 24px; }
+  .whoami .prompt { color: var(--green); margin-bottom: 16px; }
+  .whoami .field-row { display:flex; justify-content:space-between; padding: 10px 0; border-bottom: 1px dashed var(--line); }
+  .whoami .field-row:last-child { border: none; }
+  .whoami .field-row .k { color: var(--muted); }
+  .whoami .field-row .v { color: var(--ink); font-weight: 700; text-align: right; }
+  .about-text p { color: var(--muted); line-height: 1.8; margin-top: 16px; font-size: 15px; }
+  .skill-tags { display:flex; flex-wrap:wrap; gap:9px; margin-top: 22px; }
+  .skill-tags span { font-family:'JetBrains Mono',monospace; font-size:11.5px; border: 1px solid var(--line); color: var(--amber); padding: 7px 13px; }
+
+  /* perks */
+  .quote-band { border: 1px solid var(--line); background: linear-gradient(160deg, rgba(255,51,102,0.04), rgba(57,255,136,0.03)); padding: 54px clamp(24px,6vw,72px); margin: 0 6%; }
+  .quote-band h3 { font-size: clamp(19px,2.6vw,27px); font-weight: 700; margin-bottom: 24px; }
+  .work-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 22px; }
+  .work-item { border-left: 2px solid var(--red); padding-left: 14px; }
+  .work-item strong { display:block; font-family:'JetBrains Mono',monospace; font-size: 13px; color: var(--green); margin-bottom: 6px; }
+  .work-item p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+
+  /* contact */
+  .contact-wrap { display:grid; grid-template-columns: 1fr 1fr; gap: 46px; }
+  @media (max-width:800px){ .contact-wrap{grid-template-columns:1fr;} }
+  .contact-info-card { border: 1px solid var(--line); background: rgba(57,255,136,0.02); padding: 34px; display:flex; flex-direction:column; justify-content:space-between; min-height: 320px; }
+  .contact-info-card h3 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+  .contact-info-card p { color: var(--muted); line-height: 1.6; font-size: 13.5px; }
+  .contact-row { display:flex; align-items:center; gap: 14px; margin-top: 16px; font-family:'JetBrains Mono',monospace; font-size: 13px; }
+  .contact-row .ico { width:32px; height:32px; border: 1px solid var(--line); display:flex; align-items:center; justify-content:center; color: var(--green); flex-shrink:0; }
+  .contact-row .ico svg { width:15px; height:15px; filter: drop-shadow(0 0 6px var(--green)); }
+  form { display:flex; flex-direction:column; gap:16px; }
+  .field { display:flex; flex-direction:column; gap:8px; }
+  .field label { font-family:'JetBrains Mono',monospace; font-size:11px; color: var(--muted); }
+  .field label::before { content: '$ '; color: var(--green); }
+  .field input, .field textarea, .field select { background: rgba(255,255,255,0.02); border: 1px solid var(--line); padding: 13px 16px; font-family:'JetBrains Mono',monospace; font-size:13.5px; color: var(--ink); outline: none; transition: border-color .25s; }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--green); box-shadow: 0 0 0 2px rgba(57,255,136,0.15); }
+  .submit-note { font-family:'JetBrains Mono',monospace; font-size:11px; color: var(--muted); margin-top:-4px; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 6% 30px; }
+  .footer-bottom { display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; font-family:'JetBrains Mono',monospace; font-size:11.5px; color: var(--muted); }
+  .footer-bottom a { color: var(--green); text-decoration:none; }
+
+  .progress { position: fixed; top:0; left:0; height:2px; background: var(--green); z-index:200; width:0%; box-shadow: 0 0 8px var(--green); }
+  .totop { position: fixed; bottom:26px; right:26px; width:44px; height:44px; background: var(--panel); border:1px solid var(--green); color: var(--green); display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:90; opacity:0; pointer-events:none; transition: opacity .3s ease, transform .3s ease; font-family:'JetBrains Mono',monospace; }
+  .totop.show { opacity:1; pointer-events:auto; }
+  .totop:hover { box-shadow: 0 0 14px var(--green); transform: translateY(-4px); }
+</style>
+</head>
+<body>
+
+<div id="boot" class="mono">
+  <div class="line" id="b1">$ initializing portfolio.sys<span class="cursor"></span></div>
+  <div class="line" id="b2">$ loading builder profile... <span style="color:#39ff88">[OK]</span></div>
+  <div class="line" id="b3">$ mounting project archive... <span style="color:#39ff88">[OK]</span></div>
+  <div class="line" id="b4">$ access granted — welcome</div>
+</div>
+
+<canvas id="starfield"></canvas>
+<div class="grid-overlay"></div>
+<div class="crt"></div>
+<div class="noise-flicker"></div>
+
+<div class="progress" id="progress"></div>
+
+<nav>
+  <div class="logo">MADAN_MOHAN</div>
+  <ul>
+    <li><a href="#work">work</a></li>
+    <li><a href="#process">log</a></li>
+    <li><a href="#about">whoami</a></li>
+    <li><a href="#contact">contact</a></li>
+  </ul>
+  <a href="#contact" class="nav-cta">./start_project</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="boot-tag"><span class="blip"></span>STATUS: ONLINE — ACCEPTING FREELANCE WORK</div>
+  <h1>
+    <span class="line"><span>I build things</span></span>
+    <span class="line"><span class="glitch" data-text="that actually work.">that actually work.</span></span>
+  </h1>
+  <p class="sub">Freelance builder specializing in websites and mobile app architecture. <span class="hl">Self-taught, AI-assisted development</span> — with clear, honest status on every project: what's live and what's still in progress.</p>
+  <div class="cta-row">
+    <a href="#work" class="btn btn-primary">cat ./projects →</a>
+    <a href="#contact" class="btn btn-ghost">Start a Project</a>
+  </div>
+
+<!-- WORK -->
+<section id="work">
+  <div class="section-head reveal">
+    <div><span class="tag">./projects</span><h2>Proof, not promises.</h2></div>
+    <p>Self-directed demo builds. Every status label below is accurate — no "in progress" dressed up as "launched."</p>
+  </div>
+  <div class="proj-grid">
+
+    <a class="proj-card reveal" href="https://claude.ai/artifact/Jor72xB9J7tGqFQVSwwhJj" target="_blank" rel="noopener">
+      <div class="card-head"><span>NovaShield</span><span class="stat-live">● LIVE</span></div>
+      <div class="proj-visual v1"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 14.5h6L9 22l9.5-13.5h-6z"/></svg></div>
+      <div class="proj-body">
+        <h3>NovaShield</h3>
+        <p class="desc">A fully animated site for a fictional security-systems brand — pricing, services, and a genuine 9-section Terms & Conditions, not lorem ipsum.</p>
+        <div class="proj-tags"><span>HTML/CSS/JS</span><span>Scroll FX</span><span>Responsive</span></div>
+        <div class="proj-link">run demo <span class="arrow">→</span></div>
+      </div>
+    </a>
+
+    <a class="proj-card reveal" href="https://claude.ai/artifact/AGBMK7XfeSUPEuTLxXgDPM" target="_blank" rel="noopener">
+      <div class="card-head"><span>Amber & Ash</span><span class="stat-live">● LIVE</span></div>
+      <div class="proj-visual v2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8h13v6a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8Z"/><path d="M16 10h2a2.5 2.5 0 0 1 0 5h-2"/><path d="M6 2v2M10 2v2M14 2v2"/></svg></div>
+      <div class="proj-body">
+        <h3>Amber & Ash</h3>
+        <p class="desc">Warm, editorial café site — brand story, farm-to-cup timeline, real locations grid, full legal terms. Zero stock-photo energy.</p>
+        <div class="proj-tags"><span>HTML/CSS/JS</span><span>Editorial UI</span><span>Responsive</span></div>
+        <div class="proj-link">run demo <span class="arrow">→</span></div>
+      </div>
+    </a>
+
+    <div class="proj-card reveal">
+      <div class="card-head"><span>Hazri</span><span class="stat-progress">◐ IN DEVELOPMENT</span></div>
+      <div class="proj-visual v3"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M10 18h4" stroke-linecap="round"/></svg></div>
+      <div class="proj-body">
+        <h3>Hazri</h3>
+        <p class="desc">Facial-recognition attendance app for Indian shopkeepers and tuition teachers. On-device face matching, offline GPS check-ins, three user roles. Not finished — but architected like it matters, because it does.</p>
+        <div class="proj-tags"><span>React Native</span><span>Expo</span><span>Supabase</span></div>
+        <div class="proj-link">see log below <span class="arrow">↓</span></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- HAZRI LOG -->
+<section id="hazri-log">
+  <div class="section-head reveal">
+    <div><span class="tag">build.log</span><h2>Hazri — decisions, not vibes.</h2></div>
+    <p>The parts of "vibe coding" that still require actually thinking.</p>
+  </div>
+  <div class="log-track reveal">
+    <div class="log-line"><span class="ts">2025-Q3</span><span class="lvl ok">[DECIDED]</span><span class="msg">Problem scoped<span class="d">Small shopkeepers/tutors have no affordable attendance tracking — enterprise tools are overkill and overpriced.</span></span></div>
+    <div class="log-line"><span class="ts">2025-Q4</span><span class="lvl ok">[DECIDED]</span><span class="msg">On-device face matching<span class="d">MediaPipe + MobileFaceNet/ONNX chosen over cloud APIs — face data never leaves the device, only attendance results sync.</span></span></div>
+    <div class="log-line"><span class="ts">2026-Q1</span><span class="lvl ok">[DECIDED]</span><span class="msg">Backend: Supabase<span class="d">Row Level Security + private storage buckets. Razorpay integration planned for subscription billing.</span></span></div>
+    <div class="log-line"><span class="ts">now</span><span class="lvl warn">[IN PROGRESS]</span><span class="msg">Phase 2 — employee screens<span class="d">Phase 1 (auth, nav shell, mock data) shipped. Building GPS-based offline check-ins next.</span></span></div>
+  </div>
+</section>
+
+<!-- PROCESS -->
+<section id="process">
+  <div class="section-head reveal">
+    <div><span class="tag">./how_i_work</span><h2>No scope creep. No vanishing act.</h2></div>
+    <p>Four steps. All of them boring on purpose — boring means nothing surprises you later.</p>
+  </div>
+  <div class="log-track reveal">
+    <div class="log-line"><span class="ts">01</span><span class="lvl ok">[SCOPE]</span><span class="msg">Understand the ask<span class="d">A real conversation about what you need — not a template with your logo pasted on.</span></span></div>
+    <div class="log-line"><span class="ts">02</span><span class="lvl ok">[PLAN]</span><span class="msg">Design & plan first<span class="d">You see the direction before I write a line of code. No surprise redesigns at delivery.</span></span></div>
+    <div class="log-line"><span class="ts">03</span><span class="lvl ok">[BUILD]</span><span class="msg">Staged delivery<span class="d">Working progress at each checkpoint, not a single dramatic reveal at the end.</span></span></div>
+    <div class="log-line"><span class="ts">04</span><span class="lvl ok">[SHIP]</span><span class="msg">Handoff & support<span class="d">Walkthrough included. I don't disappear the moment payment clears.</span></span></div>
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section id="about">
+  <div class="split">
+    <div class="whoami reveal">
+      <div class="prompt">$ whoami --verbose</div>
+      <div class="field-row"><span class="k">name</span><span class="v">Madan Mohan Majumdar</span></div>
+      <div class="field-row"><span class="k">role</span><span class="v">Full-Stack Web & App Builder</span></div>
+      <div class="field-row"><span class="k">stack / method</span><span class="v">React Native, Expo, Web — AI-assisted dev</span></div>
+      <div class="field-row"><span class="k">site</span><span class="v">madanmohandev.netlify.app</span></div>
+    </div>
+    <div class="about-text reveal">
+      <span class="tag">whoami</span>
+      <h2>Didn't go to a coding bootcamp. Went anyway.</h2>
+      <p>I taught myself React Native and Expo through hands-on, AI-assisted development, without a formal CS degree. I care as much about how something feels to use as whether it technically works.</p>
+      <div class="skill-tags">
+        <span>React Native</span><span>Expo</span><span>HTML/CSS/JS</span><span>UI/UX</span><span>Product Planning</span><span>Technical Writing</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PERKS -->
+<div class="quote-band reveal">
+  <h3>Why work with an independent builder instead of an agency?</h3>
+  <div class="work-grid">
+    <div class="work-item"><strong>You talk to me, not a PM</strong><p>No account manager relay race. The person building it is the person replying to you.</p></div>
+    <div class="work-item"><strong>Honest scope, always</strong><p>If your budget doesn't match your ambition, I'll say so upfront — not stretch the invoice to fit.</p></div>
+    <div class="work-item"><strong>Design that isn't an afterthought</strong><p>A humanities brain means I actually think about how this reads to a real human, not just whether the div renders.</p></div>
+    <div class="work-item"><strong>No surprise line items</strong><p>One clear quote upfront — no additional fees appearing midway through the project.</p></div>
+  </div>
+</div>
+
+<!-- CONTACT -->
+<section id="contact">
+  <div class="section-head reveal">
+    <div><span class="tag">./contact</span><h2>Let's discuss your project.</h2></div>
+    <p>Share your requirements and I'll respond with a clear scope and timeline.</p>
+  </div>
+  <div class="contact-wrap">
+    <div class="contact-info-card reveal">
+      <div>
+        <h3>Let's build something.</h3>
+        <p>Reach out directly, or use the form below — I reply within one business day.</p>
+      </div>
+      <div>
+        <div class="contact-row"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>9650798178</div>
+        <div class="contact-row"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>madanmohanmajumdar3291@gmail.com</div>
+        <div class="contact-row"><span class="ico"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48 0-.24-.01-1.02-.01-1.85-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02.8-.22 1.65-.33 2.5-.33.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85 0 1.34-.01 2.42-.01 2.75 0 .27.18.58.69.48A10.01 10.01 0 0 0 22 12c0-5.52-4.48-10-10-10Z"/></svg></span>github.com/madanmohanmajumdar3291-bot</div>
+        <div class="contact-row"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>New Delhi, India</div>
+      </div>
+    </div>
+    <form class="reveal" id="demoForm">
+      <div class="field"><label>name</label><input type="text" placeholder="your name" required></div>
+      <div class="field"><label>reach_me_at</label><input type="text" placeholder="email or phone" required></div>
+      <div class="field"><label>project_type</label>
+        <select>
+          <option>website</option>
+          <option>mobile_app</option>
+          <option>not_sure_yet</option>
+        </select>
+      </div>
+      <div class="field"><label>brief</label><textarea placeholder="what are we building?"></textarea></div>
+      <button type="submit" class="btn btn-primary" style="justify-content:center;">./submit →</button>
+      <span class="submit-note">// opens a secure Jotform page to complete your submission.</span>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-bottom">
+    <span>© 2026 Madan Mohan Majumdar — Freelance Web & App Development</span>
+    <a href="mailto:madanmohanmajumdar3291@gmail.com">madanmohanmajumdar3291@gmail.com</a>
+  </div>
+</footer>
+
+<div class="totop" id="totop">↑</div>
+
+<script>
+  // boot sequence
+  const bootLines = ['b1','b2','b3','b4'];
+  bootLines.forEach((id, i) => {
+    const el = document.getElementById(id);
+    setTimeout(() => { el.style.transition = 'opacity .2s'; el.style.opacity = '1'; }, i * 350);
+  });
+  setTimeout(() => { document.getElementById('boot').classList.add('done'); }, 1900);
+
+  // starfield
+  const canvas = document.getElementById('starfield');
+  const ctx = canvas.getContext('2d');
+  let W, H, stars;
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = document.documentElement.scrollHeight; }
+  resize(); window.addEventListener('resize', resize);
+  function makeStars() {
+    stars = [];
+    const count = Math.floor((W*H)/12000);
+    for (let i=0;i<count;i++) {
+      stars.push({ x: Math.random()*W, y: Math.random()*H, r: Math.random()*1.1+0.3,
+        baseAlpha: Math.random()*0.5+0.2, twinkleSpeed: Math.random()*0.02+0.005, phase: Math.random()*Math.PI*2, parallax: Math.random()*0.12+0.02 });
+    }
+  }
+  makeStars(); window.addEventListener('resize', makeStars);
+  let scrollY = 0;
+  window.addEventListener('scroll', () => { scrollY = window.scrollY; }, { passive:true });
+  let t = 0;
+  function animate() {
+    t += 1;
+    ctx.clearRect(0,0,W,H);
+    for (const s of stars) {
+      const twinkle = Math.sin(t*s.twinkleSpeed+s.phase)*0.3;
+      const alpha = Math.max(0, Math.min(1, s.baseAlpha+twinkle));
+      const py = s.y - scrollY*s.parallax;
+      const drawY = ((py % H)+H)%H;
+      ctx.beginPath(); ctx.arc(s.x, drawY, s.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(57,255,136,${alpha*0.6})`; ctx.fill();
+    }
+    requestAnimationFrame(animate);
+  }
+  animate();
+
+  const progress = document.getElementById('progress');
+  window.addEventListener('scroll', () => {
+    const h = document.documentElement;
+    const scrolled = (h.scrollTop) / (h.scrollHeight - h.clientHeight) * 100;
+    progress.style.width = scrolled + '%';
+    document.getElementById('totop').classList.toggle('show', h.scrollTop > 600);
+  });
+
+  const revealEls = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.15 });
+  revealEls.forEach(el => io.observe(el));
+
+  document.getElementById('totop').addEventListener('click', () => window.scrollTo({top:0, behavior:'smooth'}));
+
+  document.getElementById('demoForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    window.open('https://form.jotform.com/262602925827058', '_blank');
+  });
+</script>
+
+</body>
+</html>
