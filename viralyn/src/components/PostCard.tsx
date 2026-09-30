@@ -1,6 +1,12 @@
 "use client";
 import { useState } from "react";
 import { STATUS_LABEL, type PostDTO } from "@/lib/types";
+import { FORMATS } from "@/lib/ai/formats";
+
+const toLocalInput = (iso: string | null) => {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 3600_000);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+};
 
 const ICON = { pass: "✓", warn: "!", fail: "✕" } as const;
 const TONE = { pass: "text-emerald-600 bg-emerald-50", warn: "text-amber-600 bg-amber-50", fail: "text-red-600 bg-red-50" } as const;
@@ -14,6 +20,10 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
   const [showReview, setShowReview] = useState(post.status === "needs_revision");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [scheduling, setScheduling] = useState(false);
+  const [when, setWhen] = useState(toLocalInput(post.scheduledAt));
+  const [draftFormat, setDraftFormat] = useState<string>("how-to");
+  const [draftTopic, setDraftTopic] = useState("");
   const status = STATUS_LABEL[post.status];
   const long = post.content.length > 320;
 
@@ -36,6 +46,30 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
     onDelete?.(post.id);
   }
 
+  if (post.status === "planned") {
+    return (
+      <article className="card border-dashed p-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+          <span className={`badge ${status.cls}`}>{status.text}</span>
+          <span className="font-medium text-slate-700">{post.pillar}</span>
+          {post.scheduledAt && <span>· slot {new Date(post.scheduledAt).toLocaleString()}</span>}
+        </div>
+        <p className="mb-3 text-sm text-slate-500">An open slot. Nothing is written until you give it a topic.</p>
+        <div className="flex flex-wrap gap-2">
+          <input className="input flex-1" placeholder="Topic for this slot" value={draftTopic} onChange={(e) => setDraftTopic(e.target.value)} />
+          <select className="input w-auto" value={draftFormat} onChange={(e) => setDraftFormat(e.target.value)}>
+            {FORMATS.map((f) => <option key={f}>{f}</option>)}
+          </select>
+          <button className="btn-primary" disabled={!!busy || draftTopic.trim().length < 3} onClick={() => act("draft", { format: draftFormat, topic: draftTopic })}>
+            {busy === "draft" ? "Writing & reviewing…" : "Draft it"}
+          </button>
+          {onDelete && <button className="btn-danger" disabled={!!busy} onClick={remove}>Remove</button>}
+        </div>
+        {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+      </article>
+    );
+  }
+
   const checks = post.reviewResults ?? [];
   const fails = checks.filter((c) => c.result === "fail").length;
   const warns = checks.filter((c) => c.result === "warn").length;
@@ -55,7 +89,7 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
           <div className="grid h-11 w-11 place-items-center rounded-full bg-gradient-to-br from-brand-blue to-brand-purple font-semibold text-white">{authorName.slice(0, 1).toUpperCase()}</div>
           <div>
             <div className="text-sm font-semibold">{authorName}</div>
-            <div className="text-xs text-slate-500">Preview · not posted</div>
+            <div className="text-xs text-slate-500">{post.status === "published" ? "Posted on LinkedIn" : "Preview · not posted"}</div>
           </div>
         </div>
         {editing ? (
@@ -88,10 +122,28 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
       )}
 
       {error && <p className="mx-4 mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-      {post.status === "approved" && (
-        <p className="mx-4 mb-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-          Approved. Nothing has been posted: LinkedIn publishing is <b>Unavailable</b> until you connect an account (coming in a later release).
+      {post.status === "failed" && post.lastError && (
+        <p className="mx-4 mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700"><b>Publishing failed:</b> {post.lastError}</p>
+      )}
+      {post.status === "scheduled" && post.scheduledAt && (
+        <p className="mx-4 mb-2 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+          Scheduled for {new Date(post.scheduledAt).toLocaleString()}. You&apos;ll be notified 2 hours before; unschedule any time to cancel.
+          {post.lastError && <> Last attempt failed: {post.lastError} (retrying)</>}
         </p>
+      )}
+      {post.status === "published" && (
+        <p className="mx-4 mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          Published {post.publishedAt ? new Date(post.publishedAt).toLocaleString() : ""}.{" "}
+          {post.linkedinPostId && <a className="font-medium underline" target="_blank" rel="noreferrer" href={`https://www.linkedin.com/feed/update/${encodeURIComponent(post.linkedinPostId)}/`}>View on LinkedIn</a>}
+          <span className="block text-emerald-700/70">Sync status: unverified. If you edit or delete it on LinkedIn, Viralyn can&apos;t see that (LinkedIn restricts read access for personal accounts).</span>
+        </p>
+      )}
+      {scheduling && (
+        <div className="mx-4 mb-2 flex flex-wrap items-center gap-2">
+          <input type="datetime-local" className="input w-auto" value={when} onChange={(e) => setWhen(e.target.value)} />
+          <button className="btn-primary" disabled={!!busy} onClick={async () => { await act("schedule", { at: new Date(when).toISOString() }); setScheduling(false); }}>Confirm schedule</button>
+          <button className="btn-ghost" onClick={() => setScheduling(false)}>Cancel</button>
+        </div>
       )}
 
       <div className="flex flex-wrap gap-2 border-t border-slate-100 px-4 py-3">
@@ -103,11 +155,14 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
         ) : (
           <>
             {post.status === "awaiting_approval" && <button className="btn-primary" disabled={!!busy} onClick={() => act("approve")}>{busy === "approve" ? "…" : "Approve"}</button>}
+            {["approved", "failed"].includes(post.status) && <button className="btn-primary" disabled={!!busy} onClick={() => confirm("Publish this to your LinkedIn now?") && act("publish")}>{busy === "publish" ? "Publishing…" : post.status === "failed" ? "Retry publish" : "Publish now"}</button>}
+            {["approved", "failed", "scheduled"].includes(post.status) && <button className="btn-ghost" disabled={!!busy} onClick={() => setScheduling(true)}>{post.status === "scheduled" ? "Reschedule" : "Schedule"}</button>}
+            {post.status === "scheduled" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("unschedule")}>Unschedule</button>}
             {post.status === "approved" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("unapprove")}>Undo approval</button>}
-            {!["published", "publishing"].includes(post.status) && <button className="btn-ghost" disabled={!!busy} onClick={() => setEditing(true)}>Edit</button>}
+            {!["published", "publishing", "scheduled"].includes(post.status) && <button className="btn-ghost" disabled={!!busy} onClick={() => setEditing(true)}>Edit</button>}
             {post.status === "needs_revision" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("review")}>{busy === "review" ? "Reviewing…" : "Re-run review"}</button>}
             <button className="btn-ghost" disabled={!!busy} onClick={() => act("duplicate")}>Duplicate</button>
-            {onDelete && <button className="btn-danger ml-auto" disabled={!!busy} onClick={remove}>Delete</button>}
+            {onDelete && post.status !== "published" && <button className="btn-danger ml-auto" disabled={!!busy} onClick={remove}>Delete</button>}
           </>
         )}
       </div>

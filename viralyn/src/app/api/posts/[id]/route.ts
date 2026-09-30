@@ -6,6 +6,12 @@ import { logAction } from "@/lib/log";
 import { manualEdit, PipelineError, rereview } from "@/lib/ai/pipeline";
 import { AiUnavailableError } from "@/lib/ai/client";
 import { criticalFailures } from "@/lib/ai/review";
+import { createDraft } from "@/lib/ai/pipeline";
+import { FORMATS } from "@/lib/ai/formats";
+import { publishPost } from "@/lib/publisher";
+import { LinkedInError } from "@/lib/linkedin";
+
+export const maxDuration = 300;
 
 async function owned(userId: string, id: string) {
   if (!z.string().uuid().safeParse(id).success) throw new HttpError(404, "Post not found.");
@@ -20,7 +26,14 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("edit"), content: z.string().trim().min(1).max(3000) }),
   z.object({ action: z.literal("review") }),
   z.object({ action: z.literal("duplicate") }),
+  z.object({ action: z.literal("publish") }),
+  z.object({ action: z.literal("schedule"), at: z.string().datetime({ offset: true }) }),
+  z.object({ action: z.literal("unschedule") }),
+  z.object({ action: z.literal("draft"), format: z.enum(FORMATS), topic: z.string().trim().min(3).max(200), experienceId: z.string().uuid().optional() }),
 ]);
+
+const set = async (id: string, patch: Partial<typeof schema.posts.$inferInsert>) =>
+  (await db.update(schema.posts).set({ ...patch, updatedAt: new Date() }).where(eq(schema.posts.id, id)).returning())[0];
 
 export const PATCH = authed(async (req, user, ctx) => {
   const post = await owned(user.id, (await ctx.params).id);
@@ -30,8 +43,10 @@ export const PATCH = authed(async (req, user, ctx) => {
       case "approve": {
         if (post.status !== "awaiting_approval") throw new HttpError(409, "Only posts awaiting approval can be approved.");
         if (criticalFailures(post.reviewResults ?? []).length) throw new HttpError(409, "This post failed a critical review check.");
-        const [p] = await db.update(schema.posts).set({ status: "approved", updatedAt: new Date() }).where(eq(schema.posts.id, post.id)).returning();
-        await logAction(user.id, "approve", `Approved "${post.topic}". Not published: LinkedIn publishing is not connected yet.`, { postId: post.id });
+        // A draft that already owns a future slot goes straight to Scheduled; otherwise it waits for Publish/Schedule.
+        const scheduled = post.scheduledAt && post.scheduledAt > new Date();
+        const p = await set(post.id, { status: scheduled ? "scheduled" : "approved" });
+        await logAction(user.id, "approve", scheduled ? `Approved "${post.topic}"; scheduled for ${post.scheduledAt!.toISOString()}.` : `Approved "${post.topic}".`, { postId: post.id });
         return p;
       }
       case "unapprove": {
@@ -41,6 +56,28 @@ export const PATCH = authed(async (req, user, ctx) => {
       }
       case "edit": return await manualEdit(user.id, post.id, body.content);
       case "review": return await rereview(user.id, post.id);
+      case "publish": return await publishPost(user.id, post.id);
+      case "schedule": {
+        const at = new Date(body.at);
+        if (at <= new Date()) throw new HttpError(400, "Pick a time in the future.");
+        if (post.status === "planned") return await set(post.id, { scheduledAt: at });
+        if (!["approved", "scheduled", "failed", "awaiting_approval"].includes(post.status)) throw new HttpError(409, "Only reviewed posts can be scheduled.");
+        const p = await set(post.id, { scheduledAt: at, syncStatus: null, publishAttempts: 0, status: post.status === "awaiting_approval" ? "awaiting_approval" : "scheduled" });
+        await logAction(user.id, "schedule", `Scheduled "${post.topic}" for ${at.toISOString()}.`, { postId: post.id });
+        return p;
+      }
+      case "unschedule": {
+        if (post.status !== "scheduled") throw new HttpError(409, "Post is not scheduled.");
+        const p = await set(post.id, { status: "approved", scheduledAt: null, syncStatus: null });
+        await logAction(user.id, "schedule", `Unscheduled "${post.topic}".`, { postId: post.id });
+        return p;
+      }
+      case "draft": {
+        if (post.status !== "planned") throw new HttpError(409, "Only planned slots can be drafted.");
+        const draft = await createDraft(user.id, { topic: body.topic, format: body.format, pillar: post.pillar }, body.experienceId);
+        await db.delete(schema.posts).where(eq(schema.posts.id, post.id));
+        return await set(draft.id, { scheduledAt: post.scheduledAt });
+      }
       case "duplicate": {
         const { id: _id, createdAt: _c, updatedAt: _u, linkedinPostId: _l, publishedAt: _p, scheduledAt: _s, syncStatus: _y, ...rest } = post;
         const [p] = await db.insert(schema.posts).values({ ...rest, status: "draft", topic: `${post.topic} (copy)` }).returning();
@@ -50,7 +87,7 @@ export const PATCH = authed(async (req, user, ctx) => {
     }
   } catch (err) {
     if (err instanceof AiUnavailableError) throw new HttpError(503, err.message);
-    if (err instanceof PipelineError) throw new HttpError(409, err.message);
+    if (err instanceof PipelineError || err instanceof LinkedInError) throw new HttpError(409, err.message);
     throw err;
   }
 }, { limit: 30 });

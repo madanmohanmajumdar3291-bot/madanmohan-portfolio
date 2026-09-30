@@ -1,4 +1,7 @@
-import { Unavailable } from "@/components/Unavailable";
-export default function Page() {
-  return <Unavailable title="Calendar" icon="📅" phase="Phase 5 (scheduling & calendar)">Scheduling isn't built yet. Approved posts stay in Posts until publishing and scheduling ship.</Unavailable>;
+import { requireUser } from "@/lib/auth";
+import { CalendarView } from "@/components/CalendarView";
+
+export default async function Page() {
+  const user = await requireUser();
+  return <CalendarView authorName={user.name} tz={user.timezone} />;
 }

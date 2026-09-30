@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { Logo } from "./Logo";
 import { ChatPanel } from "./ChatPanel";
+import { Notifications } from "./Notifications";
 
 const NAV = [
   { href: "/chat", label: "Ask Viralyn", icon: "💬" },
@@ -12,6 +13,7 @@ const NAV = [
   { href: "/calendar", label: "Calendar", icon: "📅" },
   { href: "/posts", label: "Posts", icon: "✍️" },
   { href: "/analytics", label: "Analytics", icon: "📊" },
+  { href: "/activity", label: "Activity", icon: "🧾" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
@@ -50,7 +52,9 @@ export function Shell({ user, linkedin, children }: { user: { name: string }; li
           );
         })}
       </ul>
-      <div className="mt-auto rounded-xl bg-white/5 p-3">
+      <div className="mt-auto space-y-2">
+      <Notifications />
+      <div className="rounded-xl bg-white/5 p-3">
         <div className="flex items-center gap-3">
           <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-brand-blue to-brand-purple text-sm font-semibold text-white">
             {user.name.slice(0, 1).toUpperCase()}
@@ -61,6 +65,7 @@ export function Shell({ user, linkedin, children }: { user: { name: string }; li
           </div>
         </div>
         <button onClick={logout} className="mt-3 w-full rounded-lg py-1.5 text-xs text-slate-400 hover:bg-white/5 hover:text-white">Sign out</button>
+      </div>
       </div>
     </nav>
   );

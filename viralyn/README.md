@@ -8,18 +8,20 @@ Viralyn learns your voice, turns what actually happened to you into posts, revie
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Auth (email + password), PostgreSQL, app shell, My Voice | ✅ Live |
-| 2 | Ask Viralyn chat (`draft_post`, `edit_draft`, `save_experience`, `submit_for_review`, `get_post_history`), LinkedIn-style preview, Review | ✅ Live |
-| 3 | Experience Inbox (full UI, voice notes) | Partial: experiences are saved via chat and listed in Inbox |
-| 4 | LinkedIn OAuth + publishing | Unavailable |
-| 5 | Scheduling + calendar | Unavailable |
-| 6 | Analytics import + insights | Unavailable |
-| 7 | Autonomous mode | Deliberately deferred |
-| 8 | Demo Mode, notifications, hardening | Not started |
+| 1 | Auth (email + password), PostgreSQL, app shell, My Voice | ✅ |
+| 2 | Ask Viralyn chat, LinkedIn-style preview, Review | ✅ |
+| 3 | Experience Inbox: text and voice notes (browser transcription), pillar tagging, "Draft a post", weekly prompt | ✅ |
+| 4 | LinkedIn OAuth (OpenID + `w_member_social`), Publish now, publish-on-schedule, Published only with a LinkedIn post id | ✅ (tested against a local API stub, not real LinkedIn) |
+| 5 | Posting settings, Calendar (month/week, drag to reschedule), Planned slots by pillar weight, background worker with retries and time zones | ✅ |
+| 6 | Analytics: CSV import, manual entry, totals, charts by format/pillar/time, insights with sample size and confidence | ✅ |
+| 7 | Autonomous mode | ⛔ Deliberately not built (see below) |
+| 8 | In-app notifications, activity log, pause/resume, chat confirmation cards | ✅ partial: no email/browser push, no Demo Mode, no OAuth login |
 
-Every page that isn't built says **Unavailable**. Nothing is simulated.
+**Why no Autonomous mode:** publishing under someone's name without per-post approval is the riskiest feature and contradicts the product's promise. Scheduling approved posts covers the convenience.
 
-Not done yet: OAuth login (email/password only for now), confirmation cards for settings changes made through chat (the chat simply has no settings tools yet), and the voice-profile auto-update prompt.
+**Chat tools:** `draft_post`, `edit_draft`, `save_experience`, `submit_for_review`, `get_post_history`, `get_analytics`, `update_settings` and `update_schedule` (both shown as confirmation cards, applied only on Confirm), and `research_topic` (returns "unavailable": no search API is wired in, so the model is told not to state current facts).
+
+**Not live-tested:** everything that calls the Claude API (voice analysis, drafting, editing, review, pillar suggestions), because no API key was available while building. The logic around those calls is tested.
 
 ## How honesty is enforced
 
@@ -37,6 +39,14 @@ Not done yet: OAuth login (email/password only for now), confirmation cards for 
 
 Re-verify these on LinkedIn's developer portal before building Phase 4, because access tiers change.
 
+## LinkedIn setup
+
+1. Create an app at developer.linkedin.com and add the products **Sign In with LinkedIn using OpenID Connect** and **Share on LinkedIn**.
+2. Register the redirect URL `$APP_URL/api/linkedin/callback`.
+3. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET` and `ENCRYPTION_KEY`.
+
+Access tokens last about 60 days, and self-serve apps get no refresh token. When a token expires, Viralyn pauses publishing, marks the post Failed with LinkedIn's reason, and asks you to reconnect.
+
 ## Stack
 
 Next.js 15 (App Router) · TypeScript · Tailwind · PostgreSQL + Drizzle ORM · Claude API (`@anthropic-ai/sdk`, structured JSON outputs validated with Zod) · bcrypt session auth with hashed session tokens in the DB · AES-256-GCM for OAuth tokens at rest.
@@ -50,6 +60,7 @@ cp .env.example .env.local        # set DATABASE_URL, ANTHROPIC_API_KEY, ENCRYPT
 npm install
 npm run db:migrate
 npm run dev                        # http://localhost:3000
+npm run worker                     # scheduler: publishes due posts every minute (needs CRON_SECRET, APP_URL)
 npm test                           # unit tests
 npm run typecheck
 ```

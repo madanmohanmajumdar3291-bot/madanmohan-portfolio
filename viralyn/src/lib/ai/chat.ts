@@ -8,6 +8,9 @@ import { historyText, loadContext, strategyText } from "./context";
 import { describeVoice } from "./voice";
 import { FORMATS } from "./formats";
 import { applyEdit, createDraft, PipelineError, rereview } from "./pipeline";
+import { Proposal, summarize } from "./proposals";
+import { loadAnalytics } from "@/lib/analytics-data";
+import { randomUUID } from "node:crypto";
 
 const DraftInput = z.object({
   topic: z.string().min(3), format: z.enum(FORMATS), pillar: z.string().optional(),
@@ -50,15 +53,49 @@ const tools: Anthropic.Tool[] = [
     input_schema: { type: "object", properties: { post_id: { type: "string" } }, required: ["post_id"] },
   },
   {
+    name: "update_settings",
+    description: "Propose a settings change. The user must tap Confirm before it applies. kind: 'pause' (optional until, ISO 8601 with offset), 'resume', or 'avoid' (topics and/or words never to post about).",
+    input_schema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["pause", "resume", "avoid"] }, until: { type: "string" },
+        topics: { type: "array", items: { type: "string" } }, words: { type: "array", items: { type: "string" } },
+      },
+      required: ["kind"],
+    },
+  },
+  {
+    name: "update_schedule",
+    description: "Propose filling open posting slots for the next N days with Planned pillars (by pillar weights). The user must confirm. It does not write posts.",
+    input_schema: { type: "object", properties: { days: { type: "integer" } }, required: ["days"] },
+  },
+  {
+    name: "get_analytics",
+    description: "Get the user's real post metrics and insights (with sample sizes and confidence). May be empty.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "research_topic",
+    description: "Research current facts about a topic from reliable sources.",
+    input_schema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+  },
+  {
     name: "get_post_history",
     description: "List the user's most recent posts with status, topic, pillar and format.",
     input_schema: { type: "object", properties: { limit: { type: "integer" } } },
   },
 ];
 
-type ToolOutcome = { result: string; postId?: string; isError?: boolean };
+type ToolOutcome = { result: string; postId?: string; isError?: boolean; proposal?: { id: string; summary: string; payload: Proposal } };
 
-async function runTool(userId: string, name: string, raw: unknown): Promise<ToolOutcome> {
+function propose(raw: unknown): ToolOutcome {
+  const payload = Proposal.parse(raw);
+  const summary = summarize(payload);
+  return { proposal: { id: randomUUID(), summary, payload }, result: `Proposal shown to the user for confirmation: "${summary}". It is NOT applied until they tap Confirm.` };
+}
+
+async function runTool(user: { id: string; timezone: string }, name: string, raw: unknown): Promise<ToolOutcome> {
+  const userId = user.id;
   try {
     switch (name) {
       case "draft_post": {
@@ -87,6 +124,15 @@ async function runTool(userId: string, name: string, raw: unknown): Promise<Tool
           .from(schema.posts).where(eq(schema.posts.userId, userId)).orderBy(desc(schema.posts.createdAt)).limit(limit ?? 10);
         return { result: rows.length ? JSON.stringify(rows) : "No posts yet." };
       }
+      case "update_settings": return propose(raw);
+      case "update_schedule": return propose({ kind: "plan", days: (raw as { days?: number })?.days ?? 7 });
+      case "get_analytics": {
+        const a = await loadAnalytics(userId, user.timezone);
+        if (!a.withMetrics) return { result: `No metrics yet (${a.publishedCount} published posts, none with analytics). Analytics come from importing LinkedIn's export or manual entry.` };
+        return { result: JSON.stringify({ publishedCount: a.publishedCount, postsWithMetrics: a.withMetrics, totals: a.totals, insights: a.insights, overallConfidence: a.confidence }) };
+      }
+      case "research_topic":
+        return { isError: true, result: "Research is unavailable: no search API is configured. Do not state current facts or statistics; write from the user's perspective or ask them for sources." };
       default:
         return { result: `Unknown tool ${name}`, isError: true };
     }
@@ -103,8 +149,10 @@ function systemPrompt(name: string, ctx: Awaited<ReturnType<typeof loadContext>>
 Principles:
 - Honesty first. Never invent facts, statistics, quotes, news or personal stories. If you lack information, say so or ask.
 - Personal posts (storytelling, personal lesson, mistake/lesson, Personal Journey) come only from experiences the user told you. If they haven't shared one, ask what happened. When they do, save it with save_experience using their words, then draft from it.
-- You cannot publish, schedule, or change settings. Publishing only happens when the user taps Approve on the post card. Never claim something was posted.
-- Scheduling, calendar, research, analytics and LinkedIn publishing are not available yet in this version. If asked, say they're coming and offer what you can do now.
+- You cannot publish. Publishing only happens when the user taps Approve/Publish on the post card. Never claim something was posted.
+- Settings and schedule changes you propose are shown as a confirmation card; they apply only when the user confirms. Say so.
+- When explaining performance, use get_analytics and quote sample sizes and confidence. If data is insufficient, say so plainly. Never invent numbers.
+- Research is not available yet, so avoid current facts and statistics.
 - When you draft or edit, the post card is shown to the user automatically: don't paste the whole post back. Briefly say what you did and summarise any review warnings or failures.
 - Be concise and friendly.
 
@@ -121,7 +169,7 @@ ${historyText(ctx)}
 
 const MAX_STEPS = 6;
 
-export async function chatTurn(user: { id: string; name: string }, message: string) {
+export async function chatTurn(user: { id: string; name: string; timezone: string }, message: string) {
   const client = ai(); // fail fast (before storing anything) when AI isn't configured
   const history = await db.select().from(schema.chatMessages)
     .where(eq(schema.chatMessages.userId, user.id)).orderBy(desc(schema.chatMessages.createdAt)).limit(30);
@@ -137,6 +185,7 @@ export async function chatTurn(user: { id: string; name: string }, message: stri
   const ctx = await loadContext(user.id);
   const postIds: string[] = [];
   const calls: { name: string; input: unknown; error?: boolean }[] = [];
+  const proposals: NonNullable<ToolOutcome["proposal"]>[] = [];
   let text = "";
 
   for (let step = 0; step < MAX_STEPS; step++) {
@@ -153,7 +202,8 @@ export async function chatTurn(user: { id: string; name: string }, message: stri
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const block of response.content) {
       if (block.type !== "tool_use") continue;
-      const out = await runTool(user.id, block.name, block.input);
+      const out = await runTool(user, block.name, block.input);
+      if (out.proposal) proposals.push(out.proposal);
       calls.push({ name: block.name, input: block.input, error: out.isError });
       if (out.postId && !postIds.includes(out.postId)) postIds.push(out.postId);
       results.push({ type: "tool_result", tool_use_id: block.id, content: out.result, is_error: out.isError });
@@ -163,7 +213,7 @@ export async function chatTurn(user: { id: string; name: string }, message: stri
   }
 
   const [saved] = await db.insert(schema.chatMessages)
-    .values({ userId: user.id, role: "assistant", content: text || "Done.", toolCalls: [...calls, ...postIds.map((id) => ({ postId: id }))] })
+    .values({ userId: user.id, role: "assistant", content: text || "Done.", toolCalls: [...calls, ...postIds.map((id) => ({ postId: id })), ...proposals.map((p) => ({ confirm: { ...p, status: "pending" } }))] })
     .returning();
   return { message: saved, postIds };
 }

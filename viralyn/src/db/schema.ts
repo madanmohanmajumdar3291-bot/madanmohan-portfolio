@@ -60,6 +60,7 @@ export const settings = pgTable("settings", {
   avoidTopics: text("avoid_topics").array().notNull().default([]),
   avoidWords: text("avoid_words").array().notNull().default([]),
   paused: boolean("paused").notNull().default(false),
+  pausedUntil: timestamp("paused_until", { withTimezone: true }),
 });
 
 export type VoiceProfile = {
@@ -114,6 +115,8 @@ export const posts = pgTable("posts", {
   publishedAt: timestamp("published_at", { withTimezone: true }),
   linkedinPostId: text("linkedin_post_id"),
   syncStatus: text("sync_status"),
+  publishAttempts: integer("publish_attempts").notNull().default(0),
+  lastError: text("last_error"),
   isDemo: boolean("is_demo").notNull().default(false),
   createdAt: createdAt(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -166,5 +169,22 @@ export const usage = pgTable("usage", {
   tokens: integer("tokens").notNull(),
   cost: real("cost").notNull(),
   action: text("action").notNull(),
+  createdAt: createdAt(),
+});
+
+export const notifications = pgTable("notifications", {
+  id: id(),
+  userId: userRef(),
+  kind: text("kind").notNull(), // approval_needed | published | publish_failed | linkedin_expired | ...
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  postId: uuid("post_id").references(() => posts.id, { onDelete: "cascade" }),
+  read: boolean("read").notNull().default(false),
+  createdAt: createdAt(),
+}, (t) => [index("notif_user_idx").on(t.userId, t.createdAt)]);
+
+export const oauthStates = pgTable("oauth_states", {
+  state: text("state").primaryKey(),
+  userId: userRef(),
   createdAt: createdAt(),
 });

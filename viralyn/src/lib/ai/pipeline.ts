@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { ReviewCheck } from "@/db/schema";
 import { logAction } from "@/lib/log";
+import { notify } from "@/lib/notify";
 import { loadContext } from "./context";
 import { editDraft, writeDraft, type Brief } from "./write";
 import { criticalFailures, reviewDraft } from "./review";
@@ -51,6 +52,7 @@ export async function createDraft(userId: string, brief: Omit<Brief, "experience
   if (exp && exp.status === "unused") await db.update(schema.experiences).set({ status: "drafted" }).where(eq(schema.experiences.id, exp.id));
 
   await logAction(userId, "draft", `Drafted "${brief.topic}" (${brief.format})${revisions ? ` after ${revisions} automatic revision(s)` : ""}.`, { postId: post.id });
+  if (status === "awaiting_approval") await notify(userId, "approval_needed", "Draft ready for approval", brief.topic, post.id);
   await logAction(userId, "review", status === "awaiting_approval" ? "Review passed; awaiting your approval." : `Review failed: ${criticalFailures(checks).map((c) => c.reason).join(" ")}`,
     { postId: post.id, status: status === "awaiting_approval" ? "ok" : "warn" });
   return post;
@@ -72,9 +74,21 @@ export async function applyEdit(userId: string, postId: string, instruction: str
   return saveAndReview(userId, post.id, draft.content, ctx, exp?.content, { hookStyle: draft.hookStyle, cta: draft.cta }, `Edited: ${instruction}`);
 }
 
+const EMOJI = /\p{Extended_Pictographic}/u;
+
 /** Manual text edit from the post card → re-review. */
 export async function manualEdit(userId: string, postId: string, content: string) {
   const post = await ownedPost(userId, postId);
+  // Learn from edits, but ask before changing the voice profile.
+  if (EMOJI.test(post.content) && !EMOJI.test(content)) {
+    await logAction(userId, "voice_signal", "You removed all emojis from a draft.", { postId });
+    const recent = await db.select({ id: schema.agentLogs.id }).from(schema.agentLogs)
+      .where(and(eq(schema.agentLogs.userId, userId), eq(schema.agentLogs.action, "voice_signal"))).limit(3);
+    if (recent.length === 3) {
+      await notify(userId, "approval_needed", "Update your voice profile?", "You keep removing emojis from drafts. Set Emojis to \"none\" in Settings → My Voice?");
+      await db.delete(schema.agentLogs).where(and(eq(schema.agentLogs.userId, userId), eq(schema.agentLogs.action, "voice_signal")));
+    }
+  }
   const exp = await getExperience(userId, post.experienceId);
   return saveAndReview(userId, post.id, content, await loadContext(userId), exp?.content, {}, "Edited manually.");
 }

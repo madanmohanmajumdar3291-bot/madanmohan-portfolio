@@ -8,6 +8,35 @@ type Msg = { id: string; role: "user" | "assistant"; content: string; toolCalls?
 const postIds = (calls: unknown[] | null | undefined) =>
   (calls ?? []).flatMap((c) => (c && typeof c === "object" && "postId" in c ? [String((c as { postId: string }).postId)] : []));
 
+type Confirm = { id: string; summary: string; status: string; result?: string | null };
+const confirmsOf = (calls: unknown[] | null | undefined) =>
+  (calls ?? []).flatMap((c) => (c && typeof c === "object" && "confirm" in c ? [(c as { confirm: Confirm }).confirm] : []));
+
+function ConfirmCard({ messageId, item }: { messageId: string; item: Confirm }) {
+  const [state, setState] = useState(item);
+  const [busy, setBusy] = useState(false);
+  async function decide(decision: "confirm" | "cancel") {
+    setBusy(true);
+    const res = await fetch("/api/chat/confirm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messageId, proposalId: item.id, decision }) });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    setState(res.ok ? { ...state, status: data.status, result: data.result } : { ...state, result: data.error ?? "Failed." });
+  }
+  return (
+    <div className="card border-l-4 border-l-brand-purple p-3 text-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirm change</div>
+      <div className="my-1 text-slate-800">{state.summary}</div>
+      {state.status === "pending" ? (
+        <div className="flex gap-2">
+          <button className="btn-primary py-1.5" disabled={busy} onClick={() => decide("confirm")}>Confirm</button>
+          <button className="btn-ghost py-1.5" disabled={busy} onClick={() => decide("cancel")}>Cancel</button>
+        </div>
+      ) : <div className="text-xs text-slate-500">{state.status === "confirmed" ? `Applied. ${state.result ?? ""}` : "Cancelled."}</div>}
+      {state.status === "pending" && state.result && <div className="mt-1 text-xs text-red-600">{state.result}</div>}
+    </div>
+  );
+}
+
 const SUGGESTIONS = [
   "Write a how-to post about writing better commit messages",
   "Got my first client for my attendance app today. Turn it into a storytelling post",
@@ -90,6 +119,7 @@ export function ChatPanel({ compact = false }: { compact?: boolean }) {
               <div className={`whitespace-pre-wrap rounded-2xl px-4 py-2.5 text-sm ${m.role === "user" ? "bg-gradient-to-r from-brand-blue to-brand-purple text-white" : m.error ? "bg-red-50 text-red-700" : "bg-white text-slate-800 shadow-card"}`}>
                 {m.content}
               </div>
+              {confirmsOf(m.toolCalls).map((c) => <ConfirmCard key={c.id} messageId={m.id} item={c} />)}
               {postIds(m.toolCalls).map((id) => posts[id] && (
                 <PostCard key={id} post={posts[id]} authorName={author} onChange={updatePost} />
               ))}

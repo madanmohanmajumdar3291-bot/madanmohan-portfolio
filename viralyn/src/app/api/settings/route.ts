@@ -22,10 +22,13 @@ const Body = z.object({
   timezone: z.string().max(64).optional(),
   name: z.string().trim().min(1).max(100).optional(),
   onboarded: z.boolean().optional(),
+  paused: z.boolean().optional(),
+  pausedUntil: z.string().datetime({ offset: true }).nullable().optional(),
 });
 
 export const PUT = authed(async (req, user) => {
-  const { timezone, name, onboarded, ...rest } = await parseBody(req, Body);
+  const { timezone, name, onboarded, pausedUntil, ...body } = await parseBody(req, Body);
+  const rest = { ...body, ...(pausedUntil !== undefined ? { pausedUntil: pausedUntil ? new Date(pausedUntil) : null } : {}) };
   if (Object.keys(rest).length) await db.update(schema.settings).set(rest).where(eq(schema.settings.userId, user.id));
   const userPatch = Object.fromEntries(Object.entries({ timezone, name, onboarded }).filter(([, v]) => v !== undefined));
   if (Object.keys(userPatch).length) await db.update(schema.users).set(userPatch).where(eq(schema.users.id, user.id));
