@@ -11,7 +11,7 @@ const PRESETS: Record<string, { baseUrl: string; model: string; host: string }> 
   openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini", host: "api.openai.com" },
 };
 
-export type CompatConfig = { name: string; baseUrl: string; model: string; apiKey: string | undefined };
+export type CompatConfig = { name: string; baseUrl: string; model: string; apiKey: string | undefined; fallbackModel?: string };
 
 /** Resolves AI_PROVIDER (+ optional AI_BASE_URL / AI_MODEL overrides) to an endpoint. */
 export function compatConfig(provider: string, env: Record<string, string | undefined> = process.env): CompatConfig {
@@ -21,12 +21,13 @@ export function compatConfig(provider: string, env: Record<string, string | unde
     baseUrl: (env.AI_BASE_URL || (provider === "nvidia" && env.NVIDIA_BASE_URL) || preset.baseUrl).replace(/\/$/, ""),
     model: env.AI_MODEL || (provider === "nvidia" && env.NVIDIA_MODEL) || preset.model,
     apiKey: env.AI_API_KEY || (provider === "nvidia" ? env.NVIDIA_API_KEY : provider === "gemini" ? env.GEMINI_API_KEY : undefined),
+    ...(env.AI_FALLBACK_MODEL ? { fallbackModel: env.AI_FALLBACK_MODEL } : {}),
   };
 }
 
 type OAMessage =
   | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[] }
+  | { role: "assistant"; content: string | null; tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string }; extra_content?: unknown }[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export type NormalizedResponse = {
@@ -34,6 +35,14 @@ export type NormalizedResponse = {
   stop_reason: "end_turn" | "tool_use" | "max_tokens" | "refusal";
   usage: { input_tokens: number; output_tokens: number };
 };
+
+// Gemini 3 attaches a thought signature to each tool call and rejects the next turn unless it's echoed back.
+// Tool blocks only live within one chat turn, so a bounded in-process map keyed by tool call id is enough.
+const toolCallExtras = new Map<string, unknown>();
+function rememberExtra(id: string, extra: unknown) {
+  toolCallExtras.set(id, extra);
+  if (toolCallExtras.size > 500) toolCallExtras.delete(toolCallExtras.keys().next().value!);
+}
 
 const textOf = (c: Anthropic.MessageParam["content"]) =>
   typeof c === "string" ? c : c.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
@@ -52,7 +61,10 @@ export function toOpenAI(system: string, messages: Anthropic.MessageParam[]): OA
       const text = textOf(m.content.filter((b) => b.type === "text"));
       if (text) out.push({ role: "user", content: text });
     } else {
-      const calls = m.content.flatMap((b) => (b.type === "tool_use" ? [{ id: b.id, type: "function" as const, function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }] : []));
+      const calls = m.content.flatMap((b) => (b.type === "tool_use" ? [{
+        id: b.id, type: "function" as const, function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+        ...(toolCallExtras.has(b.id) ? { extra_content: toolCallExtras.get(b.id) } : {}),
+      }] : []));
       out.push({ role: "assistant", content: textOf(m.content) || null, ...(calls.length ? { tool_calls: calls } : {}) });
     }
   }
@@ -60,7 +72,7 @@ export function toOpenAI(system: string, messages: Anthropic.MessageParam[]): OA
 }
 
 export function fromOpenAI(data: {
-  choices?: { message?: { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string }[];
+  choices?: { message?: { content?: string | null; tool_calls?: { id?: string; function?: { name?: string; arguments?: string }; extra_content?: unknown }[] }; finish_reason?: string }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }): NormalizedResponse {
   const choice = data.choices?.[0];
@@ -70,7 +82,9 @@ export function fromOpenAI(data: {
   (msg.tool_calls ?? []).forEach((tc, i) => {
     let input: unknown = {};
     try { input = JSON.parse(tc.function?.arguments || "{}"); } catch { input = { __invalid_json: tc.function?.arguments }; }
-    content.push({ type: "tool_use", id: tc.id || `call_${i}_${Date.now()}`, name: tc.function?.name ?? "", input });
+    const id = tc.id || `call_${i}_${Date.now()}`;
+    if (tc.extra_content) rememberExtra(id, tc.extra_content);
+    content.push({ type: "tool_use", id, name: tc.function?.name ?? "", input });
   });
   const hasTools = content.some((b) => b.type === "tool_use");
   const fr = choice?.finish_reason;
@@ -101,15 +115,28 @@ export async function compatChat(cfg: CompatConfig, opts: {
     else body.response_format = { type: "json_object" };
   }
 
-  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+  const res = await fetchWithRetry(`${cfg.baseUrl}/chat/completions`, {
     method: "POST",
     // AI_API_KEY=proxy means the environment's egress proxy injects the Authorization header itself.
     headers: { ...(cfg.apiKey && cfg.apiKey !== "proxy" ? { authorization: `Bearer ${cfg.apiKey}` } : {}), "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
   });
+  // Primary model overloaded or rate-limited after retries: try the fallback model once.
+  if ((res.status === 429 || res.status >= 500) && cfg.fallbackModel && cfg.fallbackModel !== cfg.model) {
+    return compatChat({ ...cfg, model: cfg.fallbackModel, fallbackModel: undefined }, opts);
+  }
   if (!res.ok) throw new Error(`${cfg.name} API returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return fromOpenAI(await res.json());
+}
+
+/** Retries rate limits (429) and temporary outages (5xx) with exponential backoff. */
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 4): Promise<Response> {
+  for (let i = 0; ; i++) {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) });
+    if (res.ok || i >= attempts - 1 || !(res.status === 429 || res.status >= 500)) return res;
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await new Promise((r) => setTimeout(r, Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 30) * 1000 : 2000 * 2 ** i));
+  }
 }
 
 /** Pulls the first JSON object out of a model reply (handles ```json fences and leading prose). */

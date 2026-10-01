@@ -42,3 +42,10 @@ test("resolves provider presets and overrides", () => {
   const custom = compatConfig("openai-compatible", { AI_BASE_URL: "http://x/v1/", AI_MODEL: "m", AI_API_KEY: "k" });
   assert.deepEqual(custom, { name: "openai-compatible", baseUrl: "http://x/v1", model: "m", apiKey: "k" });
 });
+
+test("echoes Gemini thought signatures back on tool calls", () => {
+  const extra = { google: { thought_signature: "sig123" } };
+  const r = fromOpenAI({ choices: [{ message: { tool_calls: [{ id: "g1", function: { name: "draft_post", arguments: "{}" }, extra_content: extra }] } }] });
+  const out = toOpenAI("s", [{ role: "assistant", content: r.content.map((b) => ({ ...b, input: {} })) as never }]);
+  assert.deepEqual((out[1] as { tool_calls: { extra_content: unknown }[] }).tool_calls[0].extra_content, extra);
+});

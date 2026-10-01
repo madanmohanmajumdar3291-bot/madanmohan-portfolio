@@ -20,6 +20,7 @@ export type Draft = z.infer<typeof Draft>;
 const RULES = `Writing rules (non-negotiable):
 - Never invent facts, statistics, quotes, studies, news, product claims, or personal stories.
 - Personal experiences may come ONLY from the <experience> block. Do not embellish it with events, numbers, people, or feelings it does not state.
+  That includes descriptions ("it was slow", "they were frustrated") and things that didn't happen ("no pitch deck", "no slides") unless the experience says so. Your reflection on what it means is fine; new facts are not.
 - If a point would need a fact you were not given, make the point without the fact or phrase it as opinion.
 - Match the voice profile, but never copy phrases from the user's writing samples or past posts.
 - Strong but honest opening hook. No clickbait, no fake suspense.

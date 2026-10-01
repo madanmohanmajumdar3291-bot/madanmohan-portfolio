@@ -21,7 +21,7 @@ Viralyn learns your voice, turns what actually happened to you into posts, revie
 
 **Chat tools:** `draft_post`, `edit_draft`, `save_experience`, `submit_for_review`, `get_post_history`, `get_analytics`, `update_settings` and `update_schedule` (both shown as confirmation cards, applied only on Confirm), and `research_topic` (returns "unavailable": no search API is wired in, so the model is told not to state current facts).
 
-**Not live-tested:** AI output quality. The NVIDIA path (tool loop, structured JSON with retry, write → review → auto-revise) was tested end to end against a local OpenAI-compatible stub, not real models.
+**Live-tested on Gemini (gemini-3.5/3.7-flash):** voice analysis, chat drafting with tool calls, refusal to invent a personal story, a story drafted from an Inbox experience, a conversational edit, and review blocking a fabricated statistic. The first run added unstated details to a personal story; tightened writer and reviewer rules fixed it on retest.
 
 ## How honesty is enforced
 
@@ -62,6 +62,10 @@ All AI calls go through `src/lib/ai/client.ts`. Set `AI_PROVIDER` and `AI_API_KE
 | `anthropic` | `claude-opus-5-5` (uses `ANTHROPIC_API_KEY`) | `api.anthropic.com` |
 
 `AI_MODEL` overrides any default, and the model must support tool calling. Non-Claude providers use JSON mode (schema-guided decoding on NVIDIA), with the schema stated in the prompt, Zod validation and one corrective retry.
+
+**Gemini free tier is about 20 requests per model per day.** One draft uses 5–8 (write, review, auto-revisions), so expect only 2–4 drafts a day. Set `AI_FALLBACK_MODEL` (used on 429/5xx after retries), or enable billing for real use.
+
+**Behind an egress proxy** (e.g. Claude Code cloud with "API credentials"), set `AI_API_KEY=proxy` and start Node with `NODE_USE_ENV_PROXY=1 NO_PROXY=localhost,127.0.0.1`, because Node's `fetch` ignores `HTTPS_PROXY` otherwise.
 
 Free tiers (Gemini, Groq, NVIDIA) are fine for testing. Gemini's free tier may use your prompts to improve Google's products, so use a paid tier for private data.
 
