@@ -46,6 +46,16 @@ Viralyn learns your voice, turns what actually happened to you into posts, revie
 
 Re-verify these on LinkedIn's developer portal before building Phase 4, because access tiers change.
 
+## Deploy (Vercel + Neon)
+
+1. **Neon:** create a project and copy the connection string (`postgresql://…?sslmode=require`).
+2. **Vercel:** Add New → Project → import this repo. If Viralyn is still inside another repo, set **Root Directory** to `viralyn`.
+3. **Environment variables** (Vercel → Settings → Environment Variables):
+   `DATABASE_URL`, `AI_PROVIDER=gemini`, `AI_API_KEY`, `AI_MODEL=gemini-3.5-flash`, `AI_FALLBACK_MODEL=gemini-flash-lite-latest`, `ENCRYPTION_KEY` (`openssl rand -hex 32`), `CRON_SECRET` (`openssl rand -hex 16`), `APP_URL` (your Vercel URL). Add `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET` once you have the LinkedIn app.
+4. **Deploy.** The build runs database migrations first (`vercel.json`).
+5. **Scheduler:** Vercel's free plan runs cron jobs only once a day, so use a free service such as cron-job.org. Call `https://<your-app>/api/cron` every minute with the header `Authorization: Bearer <CRON_SECRET>`.
+6. **Function region:** Vercel → Settings → Functions → set it to match the Neon region (e.g. Singapore `sin1` for a Neon Singapore project).
+
 ## LinkedIn setup
 
 1. Create an app at developer.linkedin.com and add the products **Sign In with LinkedIn using OpenID Connect** and **Share on LinkedIn**.

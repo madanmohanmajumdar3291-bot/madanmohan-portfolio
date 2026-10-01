@@ -4,7 +4,8 @@ import { runScheduler } from "@/lib/publisher";
 
 export const maxDuration = 300;
 
-// Called every minute by `npm run worker` (or any external cron) with the shared CRON_SECRET.
+// Called every minute by `npm run worker` or an external cron service, with the shared CRON_SECRET.
+// GET is accepted too, because many cron services only send GET.
 export async function POST(req: Request) {
   const secret = process.env.CRON_SECRET ?? "";
   const got = req.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
@@ -13,3 +14,5 @@ export async function POST(req: Request) {
   }
   return NextResponse.json(await runScheduler());
 }
+
+export const GET = POST;
