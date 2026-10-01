@@ -153,7 +153,8 @@ Principles:
 - Settings and schedule changes you propose are shown as a confirmation card; they apply only when the user confirms. Say so.
 - When explaining performance, use get_analytics and quote sample sizes and confidence. If data is insufficient, say so plainly. Never invent numbers.
 - Research is not available yet, so avoid current facts and statistics.
-- When you draft or edit, the post card is shown to the user automatically: don't paste the whole post back. Briefly say what you did and summarise any review warnings or failures.
+- When you draft or edit, the post card is shown to the user automatically: don't paste the whole post back. Briefly say what you did.
+- Never describe review results yourself; Viralyn appends the exact review outcome under your reply. Don't say a draft "passed" or is "ready".
 - Be concise and friendly.
 
 <voice_profile>
@@ -210,6 +211,17 @@ export async function chatTurn(user: { id: string; name: string; timezone: strin
     messages.push({ role: "user", content: results });
     if (step === MAX_STEPS - 1) text ||= "I ran out of steps for this request. Please try again with a narrower ask.";
   }
+
+  // Review outcomes come from the database, not the model's paraphrase.
+  const touched = await postsByIds(user.id, postIds);
+  const facts = touched.map((p) => {
+    const checks = p.reviewResults ?? [];
+    const fails = checks.filter((c) => c.result === "fail"), warns = checks.filter((c) => c.result === "warn");
+    const head = p.status === "needs_revision" ? `"${p.topic}" did not pass review and needs revision` : `"${p.topic}" is awaiting your approval`;
+    const detail = [...fails.map((c) => `${c.check} failed: ${c.reason}`), ...warns.map((c) => `${c.check} warning: ${c.reason}`)];
+    return `${head}${detail.length ? `. ${detail.join(" ")}` : ` (${checks.length} checks passed).`}`;
+  });
+  if (facts.length) text = `${text}\n\nReview: ${facts.join("\n")}`.trim();
 
   const [saved] = await db.insert(schema.chatMessages)
     .values({ userId: user.id, role: "assistant", content: text || "Done.", toolCalls: [...calls, ...postIds.map((id) => ({ postId: id })), ...proposals.map((p) => ({ confirm: { ...p, status: "pending" } }))] })

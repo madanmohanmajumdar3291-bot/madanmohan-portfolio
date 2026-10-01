@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { PostDTO } from "@/lib/types";
 import { PostCard } from "./PostCard";
+import { PostEditor } from "./PostEditor";
 
 const TABS = [
   { key: "all", label: "All", match: () => true },
@@ -18,6 +19,7 @@ export function PostsList({ authorName }: { authorName: string }) {
   const params = useSearchParams();
   const [tab, setTab] = useState(params.get("tab") ?? "all");
   const [posts, setPosts] = useState<PostDTO[] | null>(null);
+  const [writing, setWriting] = useState(false);
 
   useEffect(() => { fetch("/api/posts").then((r) => r.json()).then(setPosts); }, []);
 
@@ -30,7 +32,11 @@ export function PostsList({ authorName }: { authorName: string }) {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight">✍️ Posts</h1>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">✍️ Posts</h1>
+        <button className="btn-primary" onClick={() => setWriting(true)}>+ Write a post</button>
+      </div>
+      {writing && <PostEditor onClose={() => setWriting(false)} onCreated={(p) => { setPosts((all) => [p, ...(all ?? [])]); setWriting(false); setTab("all"); }} />}
       <div className="mb-5 flex gap-1 overflow-x-auto rounded-xl bg-white p-1 shadow-card">
         {TABS.map((t) => {
           const n = (posts ?? []).filter(t.match).length;

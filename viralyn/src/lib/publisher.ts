@@ -2,7 +2,7 @@ import { and, eq, lte, gte, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { logAction } from "./log";
 import { notify } from "./notify";
-import { LinkedInError, publishText } from "./linkedin";
+import { getAccount, LinkedInError, publishText } from "./linkedin";
 
 const MAX_ATTEMPTS = 3;
 
@@ -50,6 +50,16 @@ export async function runScheduler(now = new Date()) {
   for (const p of due) {
     const paused = p.paused || (p.pausedUntil && p.pausedUntil > now);
     if (paused) { skipped++; continue; }
+    if (!(await getAccount(p.userId))) {
+      // No LinkedIn connection: it's the user's turn to post by hand. Remind once and hand the post back.
+      const [post] = await db.update(schema.posts).set({ status: "approved", updatedAt: new Date() })
+        .where(and(eq(schema.posts.id, p.id), eq(schema.posts.status, "scheduled"))).returning();
+      if (post) {
+        await notify(p.userId, "about_to_publish", "Time to post", `"${post.topic}" is due. Open it in Viralyn, use Share manually, then paste the LinkedIn link.`, post.id);
+        await logAction(p.userId, "schedule", `"${post.topic}" is due; LinkedIn isn't connected, so you were reminded to post it manually.`, { postId: post.id });
+      }
+      skipped++; continue;
+    }
     const r = await publishPost(p.userId, p.id).catch(() => null);
     if (r?.status === "published") published++;
   }

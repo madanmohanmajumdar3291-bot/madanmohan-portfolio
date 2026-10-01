@@ -23,6 +23,13 @@ Viralyn learns your voice, turns what actually happened to you into posts, revie
 
 **Live-tested on Gemini (gemini-3.5/3.7-flash):** voice analysis, chat drafting with tool calls, refusal to invent a personal story, a story drafted from an Inbox experience, a conversational edit, and review blocking a fabricated statistic. The first run added unstated details to a personal story; tightened writer and reviewer rules fixed it on retest.
 
+## Writing and sharing without API keys
+
+- **Write a post** (Posts → "+ Write a post"): rule-based checks run as you type (avoid list, length, paragraphs, hashtags/emojis, repeated openings, copied phrases). When you save, AI review also runs if available; otherwise Accuracy, Voice, Safety and Privacy show as "not checked", never as passed.
+- **Share manually** (on approved posts): copy the text, post it on LinkedIn yourself, paste the post link. It's marked Published only with a valid LinkedIn post link.
+- **No LinkedIn connection:** scheduled posts become a "Time to post" reminder instead of failing.
+- **Chat review summaries** are generated from the stored review results, not the model's own description.
+
 ## How honesty is enforced
 
 - **Personal formats** (storytelling, personal lesson, mistake/lesson, Personal Journey pillar) are rejected in code unless the draft is tied to an Inbox experience (`lib/ai/formats.ts`, `lib/ai/pipeline.ts`).

@@ -5,7 +5,9 @@ import { logAction } from "@/lib/log";
 import { notify } from "@/lib/notify";
 import { loadContext } from "./context";
 import { editDraft, writeDraft, type Brief } from "./write";
-import { criticalFailures, reviewDraft } from "./review";
+import { criticalFailures, originalityCheck, reviewDraft } from "./review";
+import { aiAvailable, AiUnavailableError } from "./client";
+import { basicChecks, unavailableChecks } from "@/lib/checks";
 import { requiresExperience } from "./formats";
 
 const MAX_AUTO_REVISIONS = 2;
@@ -99,12 +101,53 @@ export async function rereview(userId: string, postId: string) {
   return saveAndReview(userId, post.id, post.content, await loadContext(userId), exp?.content, {}, "Re-reviewed.");
 }
 
+const RANK = { pass: 0, warn: 1, fail: 2 } as const;
+
+/**
+ * Review that always works: rule-based checks + originality, plus AI review when available.
+ * If AI is missing or fails (e.g. quota), the AI-only checks are marked "not checked", never passed.
+ */
+export async function reviewAny(opts: { userId: string; ctx: Awaited<ReturnType<typeof loadContext>>; content: string; experience?: string | null; postId?: string }) {
+  const s = opts.ctx.settings;
+  const rules = [
+    ...basicChecks(opts.content, { avoidTopics: s?.avoidTopics, avoidWords: s?.avoidWords, recentOpenings: opts.ctx.recent.filter((p) => p.id !== opts.postId).map((p) => p.content.split("\n")[0]) }),
+    originalityCheck(opts.content, opts.ctx, opts.postId),
+  ];
+  let ai: ReviewCheck[] = unavailableChecks();
+  let note: string | null = null;
+  if (aiAvailable()) {
+    try { ai = await reviewDraft({ ...opts }); }
+    catch (err) { note = err instanceof AiUnavailableError ? null : (err as Error).message; ai = unavailableChecks(); }
+  }
+  // Merge by check name, keeping the stricter verdict.
+  const merged = new Map<string, ReviewCheck>();
+  for (const c of [...ai, ...rules]) {
+    const prev = merged.get(c.check);
+    if (!prev || RANK[c.result] > RANK[prev.result]) merged.set(c.check, c);
+  }
+  if (note) await logAction(opts.userId, "review", `AI review unavailable, rule-based checks only: ${note}`, { postId: opts.postId, status: "warn" });
+  return [...merged.values()];
+}
+
 async function saveAndReview(userId: string, postId: string, content: string, ctx: Awaited<ReturnType<typeof loadContext>>,
   experience: string | null | undefined, extra: { hookStyle?: string; cta?: string }, logMsg: string) {
-  const checks = await reviewDraft({ userId, ctx, content, experience, postId });
+  const checks = await reviewAny({ userId, ctx, content, experience, postId });
   const [updated] = await db.update(schema.posts)
     .set({ content, ...extra, reviewResults: checks, status: statusFor(checks), updatedAt: new Date() })
     .where(eq(schema.posts.id, postId)).returning();
   await logAction(userId, "edit", logMsg, { postId });
   return updated;
+}
+
+/** A post the user wrote themselves. Reviewed with whatever checks are available; never published here. */
+export async function createManualPost(userId: string, input: { topic: string; format: string; pillar?: string | null; content: string; scheduledAt?: Date | null }) {
+  const ctx = await loadContext(userId);
+  const [post] = await db.insert(schema.posts).values({
+    userId, topic: input.topic, format: input.format, pillar: input.pillar ?? null, content: input.content,
+    status: "draft", scheduledAt: input.scheduledAt ?? null,
+  }).returning();
+  const checks = await reviewAny({ userId, ctx, content: input.content, postId: post.id });
+  const [saved] = await db.update(schema.posts).set({ reviewResults: checks, status: statusFor(checks) }).where(eq(schema.posts.id, post.id)).returning();
+  await logAction(userId, "draft", `Wrote "${input.topic}" manually.`, { postId: post.id });
+  return saved;
 }

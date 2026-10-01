@@ -24,6 +24,9 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
   const [when, setWhen] = useState(toLocalInput(post.scheduledAt));
   const [draftFormat, setDraftFormat] = useState<string>("how-to");
   const [draftTopic, setDraftTopic] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [copied, setCopied] = useState("");
   const status = STATUS_LABEL[post.status];
   const long = post.content.length > 320;
 
@@ -135,8 +138,24 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
         <p className="mx-4 mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
           Published {post.publishedAt ? new Date(post.publishedAt).toLocaleString() : ""}.{" "}
           {post.linkedinPostId && <a className="font-medium underline" target="_blank" rel="noreferrer" href={`https://www.linkedin.com/feed/update/${encodeURIComponent(post.linkedinPostId)}/`}>View on LinkedIn</a>}
-          <span className="block text-emerald-700/70">Sync status: unverified. If you edit or delete it on LinkedIn, Viralyn can&apos;t see that (LinkedIn restricts read access for personal accounts).</span>
+          <span className="block text-emerald-700/70">{post.syncStatus === "manual" ? "Shared manually." : "Sync status: unverified."} If you edit or delete it on LinkedIn, Viralyn can&apos;t see that (LinkedIn restricts read access for personal accounts).</span>
         </p>
+      )}
+      {sharing && (
+        <div className="mx-4 mb-3 space-y-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+          <p><b>Share manually:</b> 1) copy the text, 2) post it on LinkedIn yourself, 3) paste the post&apos;s link here. Viralyn marks it Published only with a real LinkedIn link.</p>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-ghost py-1.5" onClick={async () => {
+              try { await navigator.clipboard.writeText(post.content); setCopied("Copied."); } catch { setCopied("Copy failed: select the text above and copy it."); }
+            }}>1. Copy text</button>
+            <a className="btn-ghost py-1.5" href="https://www.linkedin.com/feed/?shareActive=true" target="_blank" rel="noreferrer">2. Open LinkedIn</a>
+            {copied && <span className="self-center">{copied}</span>}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input className="input min-w-0 flex-1" placeholder="3. Paste the LinkedIn post link" value={shareUrl} onChange={(e) => setShareUrl(e.target.value)} />
+            <button className="btn-primary py-1.5" disabled={!!busy || shareUrl.trim().length < 10} onClick={async () => { await act("mark_published", { url: shareUrl }); }}>Mark published</button>
+          </div>
+        </div>
       )}
       {scheduling && (
         <div className="mx-4 mb-2 flex flex-wrap items-center gap-2">
@@ -156,6 +175,7 @@ export function PostCard({ post, authorName, onChange, onDelete }: {
           <>
             {post.status === "awaiting_approval" && <button className="btn-primary" disabled={!!busy} onClick={() => act("approve")}>{busy === "approve" ? "…" : "Approve"}</button>}
             {["approved", "failed"].includes(post.status) && <button className="btn-primary" disabled={!!busy} onClick={() => confirm("Publish this to your LinkedIn now?") && act("publish")}>{busy === "publish" ? "Publishing…" : post.status === "failed" ? "Retry publish" : "Publish now"}</button>}
+            {["approved", "failed", "scheduled"].includes(post.status) && <button className="btn-ghost" disabled={!!busy} onClick={() => setSharing((v) => !v)}>Share manually</button>}
             {["approved", "failed", "scheduled"].includes(post.status) && <button className="btn-ghost" disabled={!!busy} onClick={() => setScheduling(true)}>{post.status === "scheduled" ? "Reschedule" : "Schedule"}</button>}
             {post.status === "scheduled" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("unschedule")}>Unschedule</button>}
             {post.status === "approved" && <button className="btn-ghost" disabled={!!busy} onClick={() => act("unapprove")}>Undo approval</button>}

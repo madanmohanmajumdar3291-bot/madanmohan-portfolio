@@ -10,6 +10,8 @@ import { createDraft } from "@/lib/ai/pipeline";
 import { FORMATS } from "@/lib/ai/formats";
 import { publishPost } from "@/lib/publisher";
 import { LinkedInError } from "@/lib/linkedin";
+import { linkedinUrnFrom } from "@/lib/checks";
+import { notify } from "@/lib/notify";
 
 export const maxDuration = 300;
 
@@ -27,6 +29,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("review") }),
   z.object({ action: z.literal("duplicate") }),
   z.object({ action: z.literal("publish") }),
+  z.object({ action: z.literal("mark_published"), url: z.string().trim().min(10).max(500) }),
   z.object({ action: z.literal("schedule"), at: z.string().datetime({ offset: true }) }),
   z.object({ action: z.literal("unschedule") }),
   z.object({ action: z.literal("draft"), format: z.enum(FORMATS), topic: z.string().trim().min(3).max(200), experienceId: z.string().uuid().optional() }),
@@ -57,6 +60,17 @@ export const PATCH = authed(async (req, user, ctx) => {
       case "edit": return await manualEdit(user.id, post.id, body.content);
       case "review": return await rereview(user.id, post.id);
       case "publish": return await publishPost(user.id, post.id);
+      case "mark_published": {
+        // Shared by hand on LinkedIn: Published only with a real LinkedIn post link.
+        if (!["approved", "scheduled", "failed"].includes(post.status)) throw new HttpError(409, "Approve the post before marking it published.");
+        const urn = linkedinUrnFrom(body.url);
+        if (!urn) throw new HttpError(400, "That isn't a LinkedIn post link. Open your post on LinkedIn, copy its link, and paste it here.");
+        const p = await set(post.id, { status: "published", linkedinPostId: urn, publishedAt: new Date(), lastError: null, syncStatus: "manual" });
+        if (post.experienceId) await db.update(schema.experiences).set({ status: "published" }).where(eq(schema.experiences.id, post.experienceId));
+        await logAction(user.id, "publish", `Marked "${post.topic}" published manually (${urn}).`, { postId: post.id });
+        await notify(user.id, "published", "Marked as published", post.topic, post.id);
+        return p;
+      }
       case "schedule": {
         const at = new Date(body.at);
         if (at <= new Date()) throw new HttpError(400, "Pick a time in the future.");
