@@ -49,10 +49,21 @@ Access tokens last about 60 days, and self-serve apps get no refresh token. When
 
 ## AI provider
 
-Set `AI_PROVIDER=nvidia` (default) with `NVIDIA_API_KEY`, or `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. All AI calls go through `src/lib/ai/client.ts`.
+All AI calls go through `src/lib/ai/client.ts`. Set `AI_PROVIDER` and `AI_API_KEY`:
 
-- **NVIDIA** uses the OpenAI-compatible endpoint at `integrate.api.nvidia.com`, `meta/llama-3.3-70b-instruct` by default (`NVIDIA_MODEL` to change; it must support tool calling). Structured steps use guided JSON, validate with Zod, and retry once with the validation error.
-- **Claude** uses native structured outputs. It writes better and catches more problems in review. Switch to it if draft quality or review reliability isn't good enough.
+| `AI_PROVIDER` | Default model | Host to allow in the network policy |
+|---|---|---|
+| `gemini` (default) | `gemini-flash-latest` | `generativelanguage.googleapis.com` |
+| `nvidia` | `meta/llama-3.3-70b-instruct` | `integrate.api.nvidia.com` |
+| `groq` | `llama-3.3-70b-versatile` | `api.groq.com` |
+| `openrouter` | `google/gemini-flash-latest` | `openrouter.ai` |
+| `openai` | `gpt-5-mini` | `api.openai.com` |
+| `openai-compatible` | set `AI_MODEL` and `AI_BASE_URL` | your endpoint |
+| `anthropic` | `claude-opus-5-5` (uses `ANTHROPIC_API_KEY`) | `api.anthropic.com` |
+
+`AI_MODEL` overrides any default, and the model must support tool calling. Non-Claude providers use JSON mode (schema-guided decoding on NVIDIA), with the schema stated in the prompt, Zod validation and one corrective retry.
+
+Free tiers (Gemini, Groq, NVIDIA) are fine for testing. Gemini's free tier may use your prompts to improve Google's products, so use a paid tier for private data.
 
 ## Stack
 
@@ -63,6 +74,7 @@ The AI pipeline is **Write → Review** (Plan+Research comes later), with each s
 ## Run locally
 
 ```bash
+./scripts/dev-setup.sh             # cloud/Linux: starts Postgres, creates the DB, installs, migrates
 cp .env.example .env.local        # set DATABASE_URL, ANTHROPIC_API_KEY, ENCRYPTION_KEY
 npm install
 npm run db:migrate

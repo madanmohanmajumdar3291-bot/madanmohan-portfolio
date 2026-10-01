@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractJson, fromOpenAI, toOpenAI } from "./nvidia";
+import { compatConfig, extractJson, fromOpenAI, toOpenAI } from "./compat";
 
 test("converts tool use and results to OpenAI format", () => {
   const out = toOpenAI("sys", [
@@ -33,4 +33,12 @@ test("extracts JSON from fenced or chatty replies", () => {
   assert.deepEqual(extractJson('Sure!\n```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('Here: {"a":{"b":2}} thanks'), { a: { b: 2 } });
   assert.throws(() => extractJson("no json here"));
+});
+
+test("resolves provider presets and overrides", () => {
+  assert.deepEqual(compatConfig("gemini", { AI_API_KEY: "k" }), { name: "gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-flash-latest", apiKey: "k" });
+  assert.equal(compatConfig("nvidia", { NVIDIA_API_KEY: "n" }).apiKey, "n");
+  assert.equal(compatConfig("gemini", { GEMINI_API_KEY: "g" }).apiKey, "g");
+  const custom = compatConfig("openai-compatible", { AI_BASE_URL: "http://x/v1/", AI_MODEL: "m", AI_API_KEY: "k" });
+  assert.deepEqual(custom, { name: "openai-compatible", baseUrl: "http://x/v1", model: "m", apiKey: "k" });
 });

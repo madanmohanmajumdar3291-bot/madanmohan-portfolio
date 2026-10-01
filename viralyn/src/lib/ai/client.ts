@@ -1,24 +1,26 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { db, schema } from "@/db";
-import { extractJson, nvidiaChat, NVIDIA_MODEL, type NormalizedResponse } from "./nvidia";
+import { compatChat, compatConfig, extractJson, type NormalizedResponse } from "./compat";
 
-/** "nvidia" (default) or "anthropic". */
-export const PROVIDER = (process.env.AI_PROVIDER || "nvidia").toLowerCase() === "anthropic" ? "anthropic" : "nvidia";
-const KEY_VAR = PROVIDER === "anthropic" ? "ANTHROPIC_API_KEY" : "NVIDIA_API_KEY";
-export const MODEL = PROVIDER === "anthropic" ? process.env.VIRALYN_MODEL || "claude-opus-5-5" : NVIDIA_MODEL;
+/** AI_PROVIDER: gemini (default) | nvidia | groq | openrouter | openai | openai-compatible | anthropic */
+export const PROVIDER = (process.env.AI_PROVIDER || "gemini").toLowerCase();
+const isClaude = PROVIDER === "anthropic";
+const compat = isClaude ? null : compatConfig(PROVIDER);
+const KEY_VAR = isClaude ? "ANTHROPIC_API_KEY" : "AI_API_KEY";
+export const MODEL = isClaude ? process.env.VIRALYN_MODEL || "claude-opus-5-5" : compat!.model;
 
-// USD per million tokens. NVIDIA's hosted trial credits are free; set AI_PRICE_* for paid endpoints.
+// USD per million tokens for cost logging. Free tiers log 0; set AI_PRICE_* for paid endpoints.
 const PRICE = {
-  input: Number(process.env.AI_PRICE_INPUT ?? (PROVIDER === "anthropic" ? 4 : 0)),
-  output: Number(process.env.AI_PRICE_OUTPUT ?? (PROVIDER === "anthropic" ? 20 : 0)),
+  input: Number(process.env.AI_PRICE_INPUT || (isClaude ? 4 : 0)),
+  output: Number(process.env.AI_PRICE_OUTPUT || (isClaude ? 20 : 0)),
 };
 
 export class AiUnavailableError extends Error {
   constructor(message = `AI is unavailable: ${KEY_VAR} is not configured on the server.`) { super(message); }
 }
 
-export const aiAvailable = () => Boolean(process.env[KEY_VAR]);
+export const aiAvailable = () => Boolean(isClaude ? process.env.ANTHROPIC_API_KEY : compat!.apiKey);
 export function requireAi() { if (!aiAvailable()) throw new AiUnavailableError(); }
 
 let anthropic: Anthropic | null = null;
@@ -35,7 +37,7 @@ export async function recordUsage(userId: string, action: string, u: Usage, post
 /** One chat-model turn with tools, normalized to Anthropic-style content blocks for either provider. */
 export async function chatModel(opts: { system: string; messages: Anthropic.MessageParam[]; tools: Anthropic.Tool[] }): Promise<NormalizedResponse> {
   requireAi();
-  if (PROVIDER === "nvidia") return nvidiaChat({ ...opts, temperature: 0.4 });
+  if (!isClaude) return compatChat(compat!, { ...opts, temperature: 0.4 });
   const r = await claude().messages.create({ model: MODEL, max_tokens: 16000, output_config: { effort: "low" }, ...opts });
   return {
     content: r.content.flatMap((b): NormalizedResponse["content"] =>
@@ -53,7 +55,7 @@ export async function structured<T extends z.ZodType>(opts: {
   requireAi();
   const { $schema: _ignored, ...jsonSchema } = z.toJSONSchema(opts.shape) as Record<string, unknown>;
 
-  if (PROVIDER === "anthropic") {
+  if (isClaude) {
     const response = await claude().messages.create({
       model: MODEL, max_tokens: 16000, system: opts.system,
       output_config: { effort: opts.effort ?? "medium", format: { type: "json_schema", schema: jsonSchema } },
@@ -67,13 +69,13 @@ export async function structured<T extends z.ZodType>(opts: {
     return opts.shape.parse(JSON.parse(text.text));
   }
 
-  // NVIDIA: guided decoding where the endpoint supports it, plus an explicit schema in the prompt,
+  // OpenAI-compatible: JSON mode (schema-guided on NVIDIA), plus an explicit schema in the prompt,
   // then strict validation. One corrective retry with the validation error before giving up.
   const system = `${opts.system}\n\nRespond with ONLY a JSON object (no prose, no code fences) matching this JSON Schema:\n${JSON.stringify(jsonSchema)}`;
   let prompt = opts.prompt;
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await nvidiaChat({ system, messages: [{ role: "user", content: prompt }], guidedJson: jsonSchema, temperature: 0.3 });
+    const r = await compatChat(compat!, { system, messages: [{ role: "user", content: prompt }], jsonSchema, temperature: 0.3 });
     await recordUsage(opts.userId, opts.action, r.usage, opts.postId);
     if (r.stop_reason === "max_tokens") throw new Error(`${opts.action}: response was cut off.`);
     const text = r.content.find((b) => b.type === "text");

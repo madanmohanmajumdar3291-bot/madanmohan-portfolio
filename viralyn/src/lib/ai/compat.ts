@@ -1,10 +1,28 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
-// NVIDIA's hosted models (build.nvidia.com) speak the OpenAI chat-completions format.
+// Providers that speak the OpenAI chat-completions format (Gemini, NVIDIA, Groq, OpenRouter, OpenAI…).
 // Viralyn keeps Anthropic-shaped messages internally; this file converts in and out.
 
-export const NVIDIA_BASE = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
-export const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+const PRESETS: Record<string, { baseUrl: string; model: string; host: string }> = {
+  gemini: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-flash-latest", host: "generativelanguage.googleapis.com" },
+  nvidia: { baseUrl: "https://integrate.api.nvidia.com/v1", model: "meta/llama-3.3-70b-instruct", host: "integrate.api.nvidia.com" },
+  groq: { baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", host: "api.groq.com" },
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", model: "google/gemini-flash-latest", host: "openrouter.ai" },
+  openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-5-mini", host: "api.openai.com" },
+};
+
+export type CompatConfig = { name: string; baseUrl: string; model: string; apiKey: string | undefined };
+
+/** Resolves AI_PROVIDER (+ optional AI_BASE_URL / AI_MODEL overrides) to an endpoint. */
+export function compatConfig(provider: string, env: Record<string, string | undefined> = process.env): CompatConfig {
+  const preset = PRESETS[provider] ?? PRESETS.gemini;
+  return {
+    name: PRESETS[provider] ? provider : "openai-compatible",
+    baseUrl: (env.AI_BASE_URL || (provider === "nvidia" && env.NVIDIA_BASE_URL) || preset.baseUrl).replace(/\/$/, ""),
+    model: env.AI_MODEL || (provider === "nvidia" && env.NVIDIA_MODEL) || preset.model,
+    apiKey: env.AI_API_KEY || (provider === "nvidia" ? env.NVIDIA_API_KEY : provider === "gemini" ? env.GEMINI_API_KEY : undefined),
+  };
+}
 
 type OAMessage =
   | { role: "system" | "user"; content: string }
@@ -63,12 +81,12 @@ export function fromOpenAI(data: {
   };
 }
 
-export async function nvidiaChat(opts: {
+export async function compatChat(cfg: CompatConfig, opts: {
   system: string; messages: Anthropic.MessageParam[]; tools?: Anthropic.Tool[]; maxTokens?: number;
-  guidedJson?: Record<string, unknown>; temperature?: number;
+  jsonSchema?: Record<string, unknown>; temperature?: number;
 }): Promise<NormalizedResponse> {
   const body: Record<string, unknown> = {
-    model: NVIDIA_MODEL,
+    model: cfg.model,
     messages: toOpenAI(opts.system, opts.messages),
     max_tokens: opts.maxTokens ?? 4096,
     temperature: opts.temperature ?? 0.6,
@@ -77,15 +95,19 @@ export async function nvidiaChat(opts: {
     body.tools = opts.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
     body.tool_choice = "auto";
   }
-  if (opts.guidedJson) body.nvext = { guided_json: opts.guidedJson };
+  if (opts.jsonSchema) {
+    // NVIDIA supports schema-guided decoding; everyone else gets the standard JSON mode.
+    if (cfg.name === "nvidia") body.nvext = { guided_json: opts.jsonSchema };
+    else body.response_format = { type: "json_object" };
+  }
 
-  const res = await fetch(`${NVIDIA_BASE}/chat/completions`, {
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${process.env.NVIDIA_API_KEY}`, "content-type": "application/json", accept: "application/json" },
+    headers: { authorization: `Bearer ${cfg.apiKey}`, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
-  if (!res.ok) throw new Error(`NVIDIA API returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) throw new Error(`${cfg.name} API returned ${res.status}: ${(await res.text()).slice(0, 300)}`);
   return fromOpenAI(await res.json());
 }
 
