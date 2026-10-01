@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { logAction } from "@/lib/log";
-import { ai, MODEL, recordUsage } from "./client";
+import { chatModel, recordUsage, requireAi } from "./client";
 import { historyText, loadContext, strategyText } from "./context";
 import { describeVoice } from "./voice";
 import { FORMATS } from "./formats";
@@ -170,7 +170,7 @@ ${historyText(ctx)}
 const MAX_STEPS = 6;
 
 export async function chatTurn(user: { id: string; name: string; timezone: string }, message: string) {
-  const client = ai(); // fail fast (before storing anything) when AI isn't configured
+  requireAi(); // fail fast (before storing anything) when AI isn't configured
   const history = await db.select().from(schema.chatMessages)
     .where(eq(schema.chatMessages.userId, user.id)).orderBy(desc(schema.chatMessages.createdAt)).limit(30);
   await db.insert(schema.chatMessages).values({ userId: user.id, role: "user", content: message });
@@ -189,20 +189,19 @@ export async function chatTurn(user: { id: string; name: string; timezone: strin
   let text = "";
 
   for (let step = 0; step < MAX_STEPS; step++) {
-    const response = await client.messages.create({
-      model: MODEL, max_tokens: 16000, system: systemPrompt(user.name, ctx), tools, messages,
-      output_config: { effort: "low" },
-    });
+    const response = await chatModel({ system: systemPrompt(user.name, ctx), tools, messages });
     await recordUsage(user.id, "chat", response.usage);
     if (response.stop_reason === "refusal") { text = "I can't help with that one."; break; }
-    messages.push({ role: "assistant", content: response.content });
-    text = response.content.filter((b) => b.type === "text").map((b) => (b as Anthropic.TextBlock).text).join("\n").trim();
+    messages.push({ role: "assistant", content: response.content.map((b) => (b.type === "text" ? b : { ...b, input: b.input as Record<string, unknown> })) });
+    text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
     if (response.stop_reason !== "tool_use") break;
 
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const block of response.content) {
       if (block.type !== "tool_use") continue;
-      const out = await runTool(user, block.name, block.input);
+      const out = (block.input as { __invalid_json?: string })?.__invalid_json !== undefined
+        ? { result: "Your tool arguments were not valid JSON. Call the tool again with valid JSON.", isError: true }
+        : await runTool(user, block.name, block.input);
       if (out.proposal) proposals.push(out.proposal);
       calls.push({ name: block.name, input: block.input, error: out.isError });
       if (out.postId && !postIds.includes(out.postId)) postIds.push(out.postId);

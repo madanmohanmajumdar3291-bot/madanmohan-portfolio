@@ -21,7 +21,7 @@ Viralyn learns your voice, turns what actually happened to you into posts, revie
 
 **Chat tools:** `draft_post`, `edit_draft`, `save_experience`, `submit_for_review`, `get_post_history`, `get_analytics`, `update_settings` and `update_schedule` (both shown as confirmation cards, applied only on Confirm), and `research_topic` (returns "unavailable": no search API is wired in, so the model is told not to state current facts).
 
-**Not live-tested:** everything that calls the Claude API (voice analysis, drafting, editing, review, pillar suggestions), because no API key was available while building. The logic around those calls is tested.
+**Not live-tested:** AI output quality. The NVIDIA path (tool loop, structured JSON with retry, write → review → auto-revise) was tested end to end against a local OpenAI-compatible stub, not real models.
 
 ## How honesty is enforced
 
@@ -47,9 +47,16 @@ Re-verify these on LinkedIn's developer portal before building Phase 4, because 
 
 Access tokens last about 60 days, and self-serve apps get no refresh token. When a token expires, Viralyn pauses publishing, marks the post Failed with LinkedIn's reason, and asks you to reconnect.
 
+## AI provider
+
+Set `AI_PROVIDER=nvidia` (default) with `NVIDIA_API_KEY`, or `AI_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. All AI calls go through `src/lib/ai/client.ts`.
+
+- **NVIDIA** uses the OpenAI-compatible endpoint at `integrate.api.nvidia.com`, `meta/llama-3.3-70b-instruct` by default (`NVIDIA_MODEL` to change; it must support tool calling). Structured steps use guided JSON, validate with Zod, and retry once with the validation error.
+- **Claude** uses native structured outputs. It writes better and catches more problems in review. Switch to it if draft quality or review reliability isn't good enough.
+
 ## Stack
 
-Next.js 15 (App Router) · TypeScript · Tailwind · PostgreSQL + Drizzle ORM · Claude API (`@anthropic-ai/sdk`, structured JSON outputs validated with Zod) · bcrypt session auth with hashed session tokens in the DB · AES-256-GCM for OAuth tokens at rest.
+Next.js 15 (App Router) · TypeScript · Tailwind · PostgreSQL + Drizzle ORM · NVIDIA-hosted models or the Claude API (JSON outputs validated with Zod) · bcrypt session auth with hashed session tokens in the DB · AES-256-GCM for OAuth tokens at rest.
 
 The AI pipeline is **Write → Review** (Plan+Research comes later), with each step returning schema-validated JSON. The chat is a manual tool-use loop. Token usage and cost are logged per user and post in `usage`.
 
