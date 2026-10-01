@@ -103,7 +103,8 @@ export async function compatChat(cfg: CompatConfig, opts: {
 
   const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { authorization: `Bearer ${cfg.apiKey}`, "content-type": "application/json", accept: "application/json" },
+    // AI_API_KEY=proxy means the environment's egress proxy injects the Authorization header itself.
+    headers: { ...(cfg.apiKey && cfg.apiKey !== "proxy" ? { authorization: `Bearer ${cfg.apiKey}` } : {}), "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
